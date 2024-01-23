@@ -1,3 +1,8 @@
+#
+.DS_Store
+data/
+gtfs/
+
 # History files
 .Rhistory
 .Rapp.history
