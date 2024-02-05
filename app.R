@@ -56,6 +56,7 @@ ui <- fluidPage(
                          choices = c("WAVE", "TTP", "KEY"))
     ),
    mainPanel(
+     h4(textOutput("time_frame")),
      tabsetPanel(
        tabPanel(
          "Ridership Summary",
@@ -129,6 +130,24 @@ server <- function(input,output){
     return(read.csv(input$mergedInput$datapath))
   })
   
+  # Get time frame of observed data
+  output$time_frame <- renderText({
+    # Ensure data is loaded
+    req(merged_data())
+    
+    times <- as.Date(merged_data()$Time, format = "%Y-%m-%d")
+    start_date <- format(min(times), "%B %Y")
+    end_date <- format(max(times), "%B %Y")
+    
+    time_frame <- start_date
+    # Create range if dataset contains
+    # data from multiple months
+    if (start_date != end_date) {
+      time_frame <- paste(start_date, end_date, sep = " - ")
+    }
+    return(time_frame)
+  })
+
   # Reactive function to filter data based on user inputs
   filtered_data <- reactive({
     
@@ -181,7 +200,7 @@ server <- function(input,output){
     
     return(data)
   })
-  
+
   # Table summarizing ridership characteristics
   output$summary_ridership <- render_gt({
     filtered <- filtered_data()
@@ -275,7 +294,7 @@ server <- function(input,output){
     # group by time interval
     filtered <- rte_filtered()
     req(nrow(filtered) > 0)
-    ripta_day <-  filtered %>%
+    ripta_day <- filtered %>%
       mutate(Tap.Date = as.Date(Time),
              Tap.DateTime.Rnd = floor_date(Time, "1 hour"),
              Tap.Interval = lubridate::hms(format(Tap.DateTime.Rnd, 
@@ -287,8 +306,8 @@ server <- function(input,output){
       filter(Avg.Riders > 10 & !is.nan(SE)) %>%
       ungroup()
    
-    # plot 
-    ggplot(ripta_day)+
+    # plot
+    ggplot(ripta_day) +
       geom_line(aes(x=Tap.Interval, y = Avg.Riders)) +
       scale_x_time() +
       geom_errorbar(aes(x = Tap.Interval,
