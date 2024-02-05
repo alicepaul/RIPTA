@@ -205,8 +205,24 @@ server <- function(input,output){
   output$summary_ridership <- render_gt({
     filtered <- filtered_data()
     req(nrow(filtered) > 0)
+    
+    # Convert each binary variable's type to 
+    # dichotomous so that it is displayed on 
+    # a single row in the summary table
+    binary_vars <- c(Student ~ "dichotomous", 
+                     Low.Income ~ "dichotomous", 
+                     Off.Peak ~ "dichotomous", 
+                     Eco.Pass ~ "dichotomous", 
+                     Transfer ~ "dichotomous", 
+                     One.Hour.Pass ~ "dichotomous", 
+                     Two.Hour.Pass ~ "dichotomous", 
+                     Day.Pass ~ "dichotomous", 
+                     Ten.Ride.Pass ~ "dichotomous", 
+                     Week.Pass ~ "dichotomous", 
+                     Monthly.Pass ~ "dichotomous")
     tab <- filtered %>% tbl_summary(include=c("Source", "Day.of.Week", 
-                                              tag_cols)) %>% as_gt()
+                                              tag_cols), 
+                                    type=binary_vars) %>% as_gt()
     return(tab)
   })
   
