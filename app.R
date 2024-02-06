@@ -28,6 +28,41 @@ csv_types <- c("text/csv", "text/comma-separated-values", "text/plain", ".csv")
 stops_gfts <- read.csv("gtfs/stops.txt")
 route_time <- read.csv("gtfs/route_time.csv")
 
+# Helper functions
+plot_ridership_by_time <- function(data) {
+  #' Plots route ridership over time.
+  #'
+  #' @param data: provided data; may be
+  #' filtered for a route specified by
+  #' the user
+  #'
+  #' @return ggplot, plot without labels
+
+  # group by time interval
+  req(nrow(data) > 0)
+  ripta_day <- data %>%
+    mutate(Tap.Date = as.Date(Time),
+           Tap.DateTime.Rnd = floor_date(Time, "1 hour"),
+           Tap.Interval = lubridate::hms(format(Tap.DateTime.Rnd,
+                                                "%H:%M:%S"))) %>%
+    group_by(Tap.Interval, Tap.Date) %>%
+    summarize(Num.Riders = sum(Ride.Count)) %>%
+    summarize(Avg.Riders = sum(Num.Riders)/n(),
+              SE = sd(Num.Riders) / sqrt(n())) %>%
+    filter(Avg.Riders > 10 & !is.nan(SE)) %>%
+    ungroup()
+
+  # plot
+  ggplot(ripta_day) +
+    geom_line(aes(x=Tap.Interval, y = Avg.Riders)) +
+    scale_x_time() +
+    geom_errorbar(aes(x = Tap.Interval,
+                      ymin = Avg.Riders - SE,
+                      ymax = Avg.Riders + SE), width = 0.2) +
+    theme_minimal()
+}
+
+
 ui <- fluidPage(
   titlePanel("RIPTA Bus Ride Analysis"),
   p("Welcome! This app is designed to visualize and summarize RIPTA ridership. 
@@ -61,8 +96,17 @@ ui <- fluidPage(
        tabPanel(
          "Ridership Summary",
          br(),
-         gt_output("summary_ridership"),
-       ), 
+         fluidRow(
+           column(width = 4,
+                  gt_output("summary_ridership")
+           ),
+           column(width = 8,
+                  plotOutput("all_routes_plot_time"),
+                  br(),
+                  plotOutput("all_routes_plot_day")
+           )
+         )
+       ),
        tabPanel(
          "Ridership by Route",
           br(),
@@ -70,7 +114,7 @@ ui <- fluidPage(
           br(),
           dataTableOutput("table_ridership"),
           br()
-        ),
+       ),
        tabPanel(
          "Route Summary",
          br(),
@@ -117,8 +161,7 @@ ui <- fluidPage(
     ),
   )
 )
-    
-        
+
 
 server <- function(input,output){
   
@@ -305,35 +348,43 @@ server <- function(input,output){
   })
   
   # Plot route ridership by time
+  # All routes
+  output$all_routes_plot_time <- renderPlot({
+    plot_ridership_by_time(filtered_data()) +
+      labs(
+        title = "Ridership Over a Day Across All Routes",
+        x = "Time",
+        y = "Ride Count")
+  })
+  # Route specified by user
   output$route_plot_time <- renderPlot({
-    
-    # group by time interval
     filtered <- rte_filtered()
-    req(nrow(filtered) > 0)
-    ripta_day <- filtered %>%
-      mutate(Tap.Date = as.Date(Time),
-             Tap.DateTime.Rnd = floor_date(Time, "1 hour"),
-             Tap.Interval = lubridate::hms(format(Tap.DateTime.Rnd, 
-                                                  "%H:%M:%S"))) %>%
-      group_by(Tap.Interval, Tap.Date) %>%
-      summarize(Num.Riders = sum(Ride.Count)) %>%
-      summarize(Avg.Riders = sum(Num.Riders)/n(),
-                SE = sd(Num.Riders) / sqrt(n())) %>%
-      filter(Avg.Riders > 10 & !is.nan(SE)) %>%
-      ungroup()
-   
-    # plot
-    ggplot(ripta_day) +
-      geom_line(aes(x=Tap.Interval, y = Avg.Riders)) +
-      scale_x_time() +
-      geom_errorbar(aes(x = Tap.Interval,
-                        ymin = Avg.Riders - SE, 
-                        ymax = Avg.Riders + SE), width = 0.2) +
+    plot_ridership_by_time(filtered) +
       labs(
         title = paste("Ridership Over a Day for Route", input$routeInput),
         x = "Time",
-        y = "Ride Count"
-      ) +
+        y = "Ride Count")
+  })
+  
+  # Plot route ridership by day of week
+  output$all_routes_plot_day <- renderPlot({
+    data <- filtered_data()
+    req(nrow(data) > 0)
+    
+    data <- data %>%
+      mutate(Tap.Date = as.Date(Time)) %>%
+      group_by(Day.of.Week, Tap.Date) %>%
+      summarize(Num.Riders = sum(Ride.Count)) %>%
+      summarize(Avg.Riders = sum(Num.Riders)/n()) %>%
+      ungroup()
+    
+    # plot
+    ggplot(data, aes(x=Day.of.Week, y = Avg.Riders)) +
+      geom_bar(stat="identity") +
+      labs(
+        title = "Average Ridership Across Days of the Week",
+        x = "Day of Week",
+        y = "Ride Count") +
       theme_minimal()
   })
   
