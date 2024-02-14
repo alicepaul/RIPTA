@@ -165,11 +165,11 @@ server <- function(input,output){
                                                             "Sat", "Sun"))
     
     # Date time
+    midnight_trips <- nchar(data$Time) < 19
+    data$Time[midnight_trips] <- paste(data$Time[midnight_trips], "00:00:00")
     data$Time <- as.POSIXct(data$Time,
                             format = "%Y-%m-%d %H:%M:%S",
                             tz = "EST")
-    # Drop rows with dates that failed to get reformatted
-    data <- drop_na(data = data, Time)
     
     # Filter by type of rider
     if (length(input$typeInput) == 0) {
@@ -226,13 +226,12 @@ server <- function(input,output){
     req(nrow(filtered) > 0)
     
     filtered %>%
-      mutate(Date = as.Date(Time)) %>%
+      filter(!(Route.Number %in% c(89, 999, 9999))) %>%
+      mutate(Date = as.Date(Time), Numeric.Time = as.numeric(Time)) %>%
       group_by(Route.Number, Date, Trip.Number) %>%
       # Get time for a single trip in minutes
-      summarize(Trip.Time = difftime(max(Time),
-                                     min(Time),
-                                     units = "mins"),
-                .groups = "drop_last") %>%
+      summarize(Trip.Time = (max(Numeric.Time)-min(Numeric.Time))/60,
+                .groups="drop_last") %>%
       # Get times for each route for each day
       summarize(Route.Time.Per.Day = sum(Trip.Time),
                 .groups = "drop_last") %>%
