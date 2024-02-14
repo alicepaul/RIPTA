@@ -320,7 +320,7 @@ server <- function(input,output){
   # Data filtered for specified route
   rte_filtered <- reactive({
     filtered <- filtered_data()
-    req(nrow(filtered) > 0 && input$routeInput)
+    req(nrow(filtered) > 0 && !is.null(input$routeInput))
     
     rte_df <- filtered %>% filter(Route.Number == input$routeInput)
     return(rte_df)
@@ -332,7 +332,8 @@ server <- function(input,output){
     req(nrow(filtered) > 0)
     
     tab <- filtered %>% tbl_summary(include = c("Source", "Day.of.Week",
-                                                TAG_COLS)) %>%
+                                                TAG_COLS),
+                                    type = list(TAG_COLS ~ "dichotomous")) %>%
       as_gt()
     return(tab)
   })
@@ -400,7 +401,7 @@ server <- function(input,output){
     num_days <- n_distinct(as.Date(df$Time))
     stop_data <- df %>%
       group_by(Stop.Number) %>%
-      summarize(Avg.Rides = round(sum(Ride.Count) / num_days,3)) %>%
+      summarize(Avg.Rides = round(sum(Ride.Count) / num_days, 3)) %>%
       mutate(Stop.Number = as.numeric(str_sub(Stop.Number, 2))) %>%
       left_join(stops_gfts, by = c( "Stop.Number"="stop_id")) %>%
       filter(!is.na(Avg.Rides) & !is.na(Stop.Number)) %>%
