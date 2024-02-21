@@ -30,7 +30,7 @@ CSV_TYPES <- c("text/csv", "text/comma-separated-values", "text/plain", ".csv")
 PUBLIC_KEY <- "c0 25 1a b3 6c 3d 79 a5 41 8e 67 07 41 c4 66 b7 eb 53 8c ec fd df b5 81 60 37 3f 8b 7e 8a f1 0d"
 
 # gtfs data
-stops_gfts <- read.csv("gtfs/stops.txt")
+# stops_gfts <- read.csv("gtfs/stops.txt")
 
 ui <- fluidPage(
   titlePanel("RIPTA Bus Ride Analysis"),
@@ -42,13 +42,13 @@ ui <- fluidPage(
   Tab 1 displays a summary table on ridership, Tab 2 displays ridership by 
   route, and Tab 3 displays a route specific summary table and plots."),
   br(),
-  p("This app was created by Alice Paul and Morgan Cunningham. 
+  p("This app was created by John Chung, Morgan Cunningham, and Alice Paul. 
     Please email Dr. Paul (alice_paul@brown.edu) with any inquiries."),
   sidebarLayout(
     sidebarPanel(
       fileInput("mergedInput", "Processed Data Upload", accept = CSV_TYPES),
-      passwordInput("password", "Enter Password"),
-      actionButton("passwordButton", "Submit"),
+      #passwordInput("password", "Enter Password"),
+      #actionButton("passwordButton", "Submit"),
       selectInput("typeInput", "Type of Rider",
                          choices = c("All Types", "Adult", "Senior", "Disabled",
                                      "Senior/Disabled", 
@@ -156,18 +156,18 @@ server <- function(input, output) {
   # Load data
   merged_data <- reactiveVal()
   # Get password-protected data hosted on server
-  observeEvent(input$passwordButton, {
-    private_key <- sha256(charToRaw(input$password))
-    # Validate string representation of private key
-    if (paste(pubkey(private_key), collapse = " ") == PUBLIC_KEY) {
-      encrypted_data <- readRDS("./data/EncryptedMergedData.rds")
-      decrypted_data <- unserialize(simple_decrypt(encrypted_data, 
-                                                   private_key))
-      merged_data(decrypted_data)
-    } else {
-      showNotification("Incorrect password", type = "error")
-    }
-  })
+  #observeEvent(input$passwordButton, {
+  #  private_key <- sha256(charToRaw(input$password))
+  #  # Validate string representation of private key
+  #  if (paste(pubkey(private_key), collapse = " ") == PUBLIC_KEY) {
+  #    encrypted_data <- readRDS("./data/EncryptedMergedData.rds")
+  #    decrypted_data <- unserialize(simple_decrypt(encrypted_data, 
+  #                                                 private_key))
+  #    merged_data(decrypted_data)
+  #  } else {
+  #    showNotification("Incorrect password", type = "error")
+  #  }
+  #})
   
   # Get data through the file upload
   observe({
