@@ -9,6 +9,7 @@ library(leaflet)
 library(hms)
 library(sf)
 library(DT)
+library(sodium)
 
 # Update max file upload size
 options(shiny.maxRequestSize = 200*1024^2)
@@ -22,8 +23,11 @@ source("utils.R")
 TAG_COLS <- c("Student", "Low.Income", "Off.Peak", "Eco.Pass", "Transfer",
               "One.Hour.Pass", "Two.Hour.Pass", "Day.Pass", "Ten.Ride.Pass",
               "Week.Pass", "Monthly.Pass")
+
 # csv file types
 CSV_TYPES <- c("text/csv", "text/comma-separated-values", "text/plain", ".csv")
+# Keys for decryption
+PUBLIC_KEY <- "c0 25 1a b3 6c 3d 79 a5 41 8e 67 07 41 c4 66 b7 eb 53 8c ec fd df b5 81 60 37 3f 8b 7e 8a f1 0d"
 
 # gtfs data
 stops_gfts <- read.csv("gtfs/stops.txt")
@@ -32,6 +36,7 @@ ui <- fluidPage(
   titlePanel("RIPTA Bus Ride Analysis"),
   p("Welcome! This app is designed to visualize and summarize RIPTA ridership. 
   If you have previously processed data, you can upload it using the sidebar. 
+  You can also load existing data hosted on the server with valid credentials. 
   Otherwise, please start by going to the last tab to upload your RIPTA data 
   sources. The app will process and merge the data, which you can then download. 
   Tab 1 displays a summary table on ridership, Tab 2 displays ridership by 
@@ -42,13 +47,14 @@ ui <- fluidPage(
   sidebarLayout(
     sidebarPanel(
       fileInput("mergedInput", "Processed Data Upload", accept = CSV_TYPES),
+      passwordInput("password", "Enter Password"),
+      actionButton("passwordButton", "Submit"),
       selectInput("typeInput", "Type of Rider",
                          choices = c("All Types", "Adult", "Senior", "Disabled",
                                      "Senior/Disabled", 
                                      "Employee/Spouse/Retiree", "Child"),
                          selected = "All Types"),
-      checkboxGroupInput("tagInput", "Rider Tag(s)",
-                         choices = TAG_COLS),
+      uiOutput("tagFilter"),
       checkboxGroupInput("dayInput", "Day(s) of Travel", 
                          choices = c("Mon", "Tue", "Wed", "Thu", "Fri", 
                                      "Sat", "Sun")),
@@ -61,6 +67,12 @@ ui <- fluidPage(
        tabPanel(
          "Ridership Summary",
          br(),
+         p("This tab summarizes ridership across all routes. The table on the 
+           left shows the total number of rides for each characteristic, 
+           and the plots display average ridership trends. Specifically, 
+           the first graph shows the average number of rides across all routes 
+           throughout a day, whereas the second graph charts this relationship 
+           across days of the week."),
          fluidRow(
            column(width = 4,
                   gt_output("summary_ridership")
@@ -75,6 +87,11 @@ ui <- fluidPage(
        tabPanel(
          "Ridership by Route",
           br(),
+         p("This tab compares ridership across routes. The graph displays the 
+           average number of rides per minute for each route and sorts them in 
+           descending order. In addition to the average number of rides per 
+           minute, the table below the graph shows other ridership 
+           information that can be compared."),
           plotlyOutput("plot_ridership", height = "800px"),
           br(),
           dataTableOutput("table_ridership"),
@@ -83,6 +100,12 @@ ui <- fluidPage(
        tabPanel(
          "Route Summary",
          br(),
+         p("This tab summarizes ridership for a specific route. The table on 
+           the left shows the total number of rides for each characteristic 
+           where the data has been filtered for the provided route. Like the 
+           Ridership Summary tab, the first graph shows the average number of 
+           rides throughout a day. However, the second graph shows the average 
+           number of rides at each stop along this route."),
          uiOutput("routeOutput"),
          br(),
          fluidRow(
@@ -128,28 +151,70 @@ ui <- fluidPage(
 )
 
 
-server <- function(input,output){
+server <- function(input, output) {
+  
+  # Load data
+  merged_data <- reactiveVal()
+  # Get password-protected data hosted on server
+  observeEvent(input$passwordButton, {
+    private_key <- sha256(charToRaw(input$password))
+    # Validate string representation of private key
+    if (paste(pubkey(private_key), collapse = " ") == PUBLIC_KEY) {
+      encrypted_data <- readRDS("./data/EncryptedMergedData.rds")
+      decrypted_data <- unserialize(simple_decrypt(encrypted_data, 
+                                                   private_key))
+      merged_data(decrypted_data)
+    } else {
+      showNotification("Incorrect password", type = "error")
+    }
+  })
   
   # Get data through the file upload
-  merged_data <- reactive({
+  observe({
     if (is.null(input$mergedInput)) {
-      return("")
+      merged_data(NULL)
+    } else {
+      merged_data(read.csv(input$mergedInput$datapath))
     }
-    return(read.csv(input$mergedInput$datapath))
   })
   
   # Get time frame of observed data
-  output$time_frame <- renderText({
-    # Ensure data is loaded
-    req(merged_data())
+  all_dates <- reactive({
+    if (is.null(merged_data())) {
+      return(NULL)
+    }
     data <- merged_data()
-    
-    times <- as.Date(data$Time, format = "%Y-%m-%d")
-    start_date <- format(min(times), "%B %d, %Y")
-    end_date <- format(max(times), "%B %d, %Y")
-    
+    return(as.Date(data$Time, format = "%Y-%m-%d"))
+  })
+  
+  output$time_frame <- renderText({
+    if (is.null(all_dates())) {
+      return("")
+    }
+    all_dates <- all_dates()
+    start_date <- format(min(all_dates), "%B %d, %Y")
+    end_date <- format(max(all_dates), "%B %d, %Y")
     time_frame <- paste(start_date, end_date, sep = " - ")
     return(time_frame)
+  })
+  
+  # Get active tags
+  active_tags <- reactive({
+    active_tags <- TAG_COLS
+    if (is.null(all_dates())) {
+      return(active_tags)
+    }
+    inactive_date <- as.Date("2022-1-15", format = "%Y-%m-%d")
+    inactive_tags <- c("Two.Hour.Pass", "Ten.Ride.Pass", "Week.Pass")
+    if (inactive_date < min(all_dates())) {
+      active_tags <- active_tags[!(active_tags %in% inactive_tags)]
+    }
+    return(active_tags)
+  })
+  
+  output$tagFilter<- renderUI({
+    checkboxGroupInput("tagInput", "Rider Tag(s)",
+                       choices = active_tags())
   })
   
   # Filter data based on user inputs
@@ -159,7 +224,7 @@ server <- function(input,output){
     data <- merged_data()
     
     # Make tag columns factors
-    data[, TAG_COLS] <- lapply(data[, TAG_COLS], factor)
+    data[, active_tags()] <- lapply(data[, active_tags()], factor)
     data$Day.of.Week <- factor(data$Day.of.Week, levels = c("Mon", "Tue", "Wed", 
                                                             "Thu", "Fri", 
                                                             "Sat", "Sun"))
@@ -214,8 +279,9 @@ server <- function(input,output){
     req(nrow(filtered) > 0)
     
     tab <- filtered %>% tbl_summary(include = c("Source", "Day.of.Week",
-                                                TAG_COLS), 
-                                    type = list(TAG_COLS ~ "dichotomous")) %>%
+                                                active_tags()), 
+                                    type = list(active_tags() ~ "dichotomous")
+                                    ) %>%
       as_gt()
     return(tab)
   })
@@ -331,8 +397,9 @@ server <- function(input,output){
     req(nrow(filtered) > 0)
     
     tab <- filtered %>% tbl_summary(include = c("Source", "Day.of.Week",
-                                                TAG_COLS),
-                                    type = list(TAG_COLS ~ "dichotomous")) %>%
+                                                active_tags()),
+                                    type = list(active_tags() ~ "dichotomous")
+                                    ) %>%
       as_gt()
     return(tab)
   })
@@ -402,23 +469,33 @@ server <- function(input,output){
       group_by(Stop.Number) %>%
       summarize(Avg.Rides = round(sum(Ride.Count) / num_days, 3)) %>%
       mutate(Stop.Number = as.numeric(str_sub(Stop.Number, 2))) %>%
-      left_join(stops_gfts, by = c( "Stop.Number"="stop_id")) %>%
+      left_join(stops_gfts, by = c("Stop.Number" = "stop_id")) %>%
       filter(!is.na(Avg.Rides) & !is.na(Stop.Number)) %>%
-      select(Stop.Number, stop_lat, stop_lon, Avg.Rides) %>%
-      mutate(col = cut(Avg.Rides, c(0, 1, 5, 10, 25, 50, max(Avg.Rides) + 1), 
-                       include.lowest = T,
-                       labels = c("<1", "1-4", "5-9", "10-24", "25-49", 
-                                  "50+")))
-
+      select(Stop.Number, stop_lat, stop_lon, Avg.Rides)
+    
+    # Ensure stop data exists
+    req(nrow(stop_data) > 0)
+    
+    # Create breaks via quantiles
+    # Remove duplicates because quantiles may be
+    # same with limited data
+    breaks <- unique(quantile(stop_data$Avg.Rides, 
+                              probs = seq(0, 1, 0.2)))
+    
+    stop_data <- mutate(stop_data, 
+                        Rides.Group = cut(Avg.Rides, 
+                                          breaks, 
+                                          include.lowest = T))
+    
     # plot
-    pal <- colorFactor(palette = 'RdPu', stop_data$col)
+    pal <- colorFactor(palette = 'RdPu', stop_data$Rides.Group)
     leaflet(data = stop_data) %>%
       addProviderTiles(providers$CartoDB.Positron) %>%
       addCircleMarkers(lng = ~stop_lon, lat = ~stop_lat, 
                    popup = as.character(stop_data$Avg.Rides),
                    radius = 2, opacity = 1,
-                   col = ~pal(col)) %>%
-      addLegend('bottomright', pal = pal, values = stop_data$col,
+                   col = ~pal(Rides.Group)) %>%
+      addLegend('bottomright', pal = pal, values = stop_data$Rides.Group,
                 opacity = 1)
   })
   

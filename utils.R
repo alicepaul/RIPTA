@@ -19,7 +19,7 @@ plot_ridership_by_time <- function(data) {
               .groups="drop_last") %>%
     summarize(Avg.Riders = sum(Num.Riders)/n(),
               SE = sd(Num.Riders) / sqrt(n())) %>%
-    filter(Avg.Riders > 10 & !is.nan(SE)) %>%
+    filter(Avg.Riders > 5 & !is.nan(SE)) %>%
     ungroup()
   
   # plot
