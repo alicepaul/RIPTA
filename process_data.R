@@ -3,7 +3,9 @@ library(lubridate)
 
 ################## WAVE DATA ##################################################
 
-prep_wave <- function(wave_file, institution_file = NULL){
+prep_wave <- function(wave_file,
+                      institution_file = NULL,
+                      institution_summary_file = NULL) {
   
   # Read in data
   WAVE_data <- read.csv(wave_file)
@@ -64,10 +66,6 @@ prep_wave <- function(wave_file, institution_file = NULL){
   WAVE_data$Day.Pass <- ifelse(
     WAVE_data$Tag %in% c("Day Pass", "Day Pass (Institutional)", 
                          "Day Pass (Disposable)", "Day Pass (Student)"), 1, 0)
-  WAVE_data$Student <- ifelse(
-    WAVE_data$Tag %in% c("Monthly Pass (Institutional)", "Monthly Pass (Student)",
-                         "Day Pass (Institutional)", "Day Pass (Student)",
-                         "UPASS"), 1, 0)
   WAVE_data$Off.Peak <- ifelse(
     WAVE_data$Tag %in% c("Senior Off-Peak", "Disability Off-Peak"), 1, 0)
   WAVE_data$Low.Income <- ifelse(
@@ -78,11 +76,10 @@ prep_wave <- function(wave_file, institution_file = NULL){
   WAVE_data$Transfer <- ifelse(
     WAVE_data$Transaction.Type %in% c("Transfer"), 1, 0)
   
-  # Add in institution data
-  if (!is.null(institution_file)){
-    
-    # select columns
-    Institution_data <- read.csv(institution_file, skip = 6) 
+  # Add in institutional data
+  # Ensure both files are provided when incorporating institutional data
+  if (!(is.null(institution_file) || is.null(institution_summary_file))) {
+    Institution_data <- read.csv(institution_file)
     
     # update time and select cols
     Institution_data$Time <- as.POSIXct(paste(Institution_data$Tap.Date, 
@@ -98,28 +95,102 @@ prep_wave <- function(wave_file, institution_file = NULL){
     WAVE_data <- left_join(WAVE_data, Institution_data, 
                                       by = c("Time","Card.Number"),
                                       relationship = "many-to-many")
-  } else{
-    WAVE_data$Institution.Name = "None"
-  }
+    
+    # Create column for college
+    WAVE_data$College <- case_when(
+      WAVE_data$Institution.Name == "CCRI" ~ "CCRI",
+      WAVE_data$Institution.Name == "URI Campus Store" ~ "URI",
+      WAVE_data$Institution.Name == "Johnson & Wales University" ~ "J&W",
+      WAVE_data$Institution.Name == "Roger Williams University" ~ "RWU",
+      TRUE ~ "None")
+    
+    # Create column for high school
+    WAVE_data$High.School <- case_when(
+      WAVE_data$Institution.Name == "Providence Public School Department"
+      ~ "PPSD",
+      WAVE_data$Institution.Name == "The Met School"
+      ~ "Met",
+      WAVE_data$Institution.Name == "RI Nurses - Institutional Middle College"
+      ~ "RINI",
+      WAVE_data$Institution.Name == "Village Green Charter School" 
+      ~ "VGCS",
+      WAVE_data$Institution.Name == "Achievement First RI"
+      ~ "AFRI",
+      WAVE_data$Institution.Name == "Paul Cuffee School"
+      ~ "PCS",
+      WAVE_data$Institution.Name == "Charette Charter School"
+      ~ "CCS",
+      WAVE_data$Institution.Name == "Nowell Leadership Academy"
+      ~ "NLA",
+      WAVE_data$Institution.Name == "Trinity Academy for the Performing Arts"
+      ~ "TAPA",
+      WAVE_data$Institution.Name == "Youth Build Prep Academy"
+      ~ "YPA",
+      WAVE_data$Institution.Name == "Times2 Academy"
+      ~ "TIMES2",
+      WAVE_data$Institution.Name == "Highlander Charter School"
+      ~ "HCS",
+      WAVE_data$Institution.Name == "NEL/CPS Construction and Career Academy"
+      ~ "CCA",
+      WAVE_data$Institution.Name == "Urban Collaborative Program"
+      ~ "UCP",
+      WAVE_data$Institution.Name == "Blackstone Academy"
+      ~ "Blackstone",
+      WAVE_data$Institution.Name == "360 High School"
+      ~ "360",
+      WAVE_data$Institution.Name == "Central High School"
+      ~ "Central",
+      WAVE_data$Institution.Name == "Davies Career & Tech High School"
+      ~ "Davies",
+      WAVE_data$Institution.Name == "Bishop Hendricken HS"
+      ~ "BHHS",
+      WAVE_data$Institution.Name == "Pawtucket School Department"
+      ~ "PSD",
+      WAVE_data$Institution.Name == "E-Cubed Academy"
+      ~ "E-Cubed",
+      WAVE_data$Institution.Name == "Providence Career Technical HS"
+      ~ "PCTHS",
+      WAVE_data$Institution.Name == "Warwick Schools"
+      ~ "Warwick",
+      TRUE ~ "None")
+    
+    # Create column for institution type
+    name_to_type <- read.csv(institution_summary_file) %>%
+      select(Institution.Name, Institution.Type) %>%
+      # Convert string None to NA to merge with NA values
+      # in Institution.Name
+      mutate(Institution.Name = replace(Institution.Name, 
+                                        Institution.Name == "None", 
+                                        NA))
+    WAVE_data <- WAVE_data %>%
+      left_join(name_to_type) %>%
+      rename(Institution = Institution.Type)
   
+  } else {
+    WAVE_data$Institution.Name = "None"
+    WAVE_data$College = "None"
+    WAVE_data$High.School = "None"
+    WAVE_data$Institution = "None"
+  }
   
   # Select final columns
   WAVE_data$Source <- "WAVE"
   WAVE_data$Route.Number <- as.numeric(WAVE_data$Route.Number)
   WAVE_data <- WAVE_data %>%
-    select(Source, Route.Number, Trip.Number, Stop.Number, Time, Ride.Count, 
-           Type, Student, Institution.Name, Low.Income, Off.Peak, 
-           Eco.Pass, Transfer, Monthly.Pass, Day.Pass, One.Hour.Pass) 
+    select(Source, Route.Number, Trip.Number, Stop.Number, Time, Ride.Count,
+           Type, College, High.School, Institution.Name, Institution,
+           Low.Income, Off.Peak, Eco.Pass, Transfer, Monthly.Pass, Day.Pass,
+           One.Hour.Pass) 
   
   return(WAVE_data)
 }
 
 ################## TTP DATA ################################################### 
 
-prep_ttp <- function(ttp_filename){
+prep_ttp <- function(ttp_filename) {
 
   # Pivot to separate by type
-  TTP_data <- read.csv(ttp_filename, skip=5) %>% 
+  TTP_data <- read.csv(ttp_filename) %>% 
     pivot_longer(cols = c("TTP1.FF.XFER":"TTP48.CHANGE"), 
                  names_to = "Product.Type", values_to = "Ride.Count") %>% 
     filter(Ride.Count !=0, !(Location %in% c("Route Total", "Location Total",
@@ -130,7 +201,7 @@ prep_ttp <- function(ttp_filename){
   
   # Update time
   TTP_data$Time <- as.POSIXct(TTP_data$Date.Time, 
-                              format = "%m/%d/%y %H:%M",
+                              format = "%m/%d/%Y %H:%M",
                               tz = "EST")
   
   # Delete non-ridership categories
@@ -141,11 +212,11 @@ prep_ttp <- function(ttp_filename){
   # Categorize
   adult_cats <- c("TTP6", "TTP7", "TTP8", "TTP9", "TTP10", "TTP12", "TTP14", 
                   "TTP15", "TTP17", "TTP19", "TTP20", "TTP21", "TTP23", 
-                  "TTP24", "TTP25", "TTP26", "TTP28", "TTP30", "TTP34",
-                  "TTP35", "TTP37", "TTP38", "TTP39", 
+                  "TTP24", "TTP25", "TTP26", "TTP28", "TTP30", "TTP32", 
+                  "TTP34", "TTP35", "TTP37", "TTP38", "TTP39", 
                   "TTP40", "TTP41", "TTP42", "TTP45", "TTP46", "TTP48")
   senior_cats <- c("TTP16", "TTP29", "TTP36")
-  disabled_cats <- c("TTP27", "TTP31", "TTP32")
+  disabled_cats <- c("TTP27", "TTP31")
   employee_cats <- c("TTP5", "TTP13", "TTP33")
   transfer_cats <- c("TTP1", "TTP11", "TTP2", "TTP3", "TTP22")
   
@@ -160,10 +231,19 @@ prep_ttp <- function(ttp_filename){
                               "Transfer")
   
   # Adding Tags
-  TTP_data$Student <- ifelse(
-    TTP_data$Product.Type %in% c("TTP8", "TTP10", "TTP12", "TTP23",
-                                "TTP26", "TTP28", "TTP30", "TTP38","TTP40"), 1, 0
+  TTP_data$College <- case_when(
+    TTP_data$Product.Type == "TTP8" ~ "Bryant", 
+    TTP_data$Product.Type == "TTP10" ~ "SRU", 
+    TTP_data$Product.Type == "TTP12" ~ "Brown", 
+    TTP_data$Product.Type == "TTP23" ~ "RISD", 
+    TTP_data$Product.Type == "TTP26" ~ "RWU", 
+    TTP_data$Product.Type %in% c("TTP28", "TTP38") ~ "J&W", 
+    TTP_data$Product.Type == "TTP30" ~ "URI", 
+    TTP_data$Product.Type == "TTP32" ~ "RIC", 
+    TTP_data$Product.Type == "TTP40" ~ "PC", 
+    TRUE ~ "None", 
   )
+  
   TTP_data$Low.Income <- ifelse(
     TTP_data$Product.Type %in% c("TTP16", "TTP27", "TTP36"), 1, 0)
   TTP_data$Off.Peak <- ifelse(TTP_data$Product.Type %in% c("TTP41"), 1, 0)
@@ -181,7 +261,7 @@ prep_ttp <- function(ttp_filename){
   TTP_data$Source <- "TTP"
   TTP_data <- TTP_data %>%
     select(Source, Route.Number, Trip.Number, Time, Ride.Count, 
-           Type, Student, Low.Income, Off.Peak, Eco.Pass, Monthly.Pass, 
+           Type, College, Low.Income, Off.Peak, Eco.Pass, Monthly.Pass, 
            Ten.Ride.Pass, Week.Pass, Day.Pass, Two.Hour.Pass)
   
   return(TTP_data)
@@ -189,92 +269,99 @@ prep_ttp <- function(ttp_filename){
 
 ###################### KEY ####################################################
 
-prep_key <- function(key_filename){
+prep_key <- function(key_filename) {
   
   # Read in data and remove columns
-  KEY_data <- read.csv(key_filename, skip=5) %>% 
+  KEY_data <- read.csv(key_filename) %>%
     select(-c("Key.6.WHEELCHR", "Key.8.EMG.XFER", "Key..", "Key.B.BIKE",
                                           "Key.C.CHANGE")) %>%
     mutate(Route = as.numeric(Route)) %>%
     rename(Route.Number = Route, Trip.Number = Trip) %>%
     filter(!is.na(Route.Number))
-    
-  # Convert to numeric
-  num_cols <- colnames(KEY_data)[grepl("Key", colnames(KEY_data))]
-  KEY_data[, num_cols] <- lapply(num_cols, function(x) as.numeric(KEY_data[,x]))
   
-  # Pivot to separate by type 
-  KEY_data <- KEY_data %>% 
-    pivot_longer(cols = c("Key.1.SP.EVENT":"Key.D.DAY.PASS"), 
+  # Convert to numeric
+  numeric_cols <- c("Preset",
+                    colnames(KEY_data)[grepl("Key", colnames(KEY_data))])
+  KEY_data[, numeric_cols] <- lapply(numeric_cols,
+                                     function(x) as.numeric(KEY_data[, x]))
+  
+  # Pivot to separate by type
+  KEY_data <- KEY_data %>%
+    pivot_longer(cols = all_of(numeric_cols),
                  names_to = "Product.Type", values_to = "Ride.Count") %>%
     filter(Ride.Count != 0)
   
   # Update time
   KEY_data$Time <- as.POSIXct(KEY_data$Date.and.Time, 
-                              format = "%m/%d/%Y %H:%M:%S",
+                              format = "%m/%d/%Y %H:%M",
                               tz = "EST")
   
-  
   # Add type
-  adult_keys <- c("Preset", "Key.1.SP.EVENT", "Monthly.Pass", "Student", 
-                  "Ten.Ride.Pass","Week.Pass", "Key.9.NO.READ", 
-                  "Low.Income", "Day.Pass")
-  child_keys <- c("Key.4.KIDS")
-  KEY_data$Type <- case_when(KEY_data$Product.Type %in% adult_keys ~ "Adult",
-                            KEY_data$Product.Type %in% child_keys ~ "Child")
+  KEY_data$Type <- ifelse(KEY_data$Product.Type == "Key.4.KIDS",
+                          "Child",
+                          "Adult")
   
   # Adding tags
-  KEY_data$Student <- ifelse(KEY_data$Product.Type %in% c("Key.3.UPASS"), 1, 0)
-  KEY_data$Low.Income <- ifelse(KEY_data$Product.Type %in% c("Key.A.PCA"), 1, 0)
-  KEY_data$Day.Pass <- ifelse(KEY_data$Product.Type %in% c("Key.D.DAY.PASS"), 
-                              1, 0)
-  KEY_data$Monthly.Pass <- ifelse(KEY_data$Product.Type %in% c("Key.2.MBTA"), 
-                                  1, 0)
-  KEY_data$Week.Pass <- ifelse(KEY_data$Product.Type %in% c("Key.7.ISS.7DAY"), 
-                               1, 0)
-  KEY_data$Ten.Ride.Pass <- ifelse(
-    KEY_data$Product.Type %in% c("Key.5.10.RIDE"), 1, 0)
+  KEY_data$College <- ifelse(KEY_data$Product.Type == "Key.3.UPASS",
+                             "Unknown",
+                             "None")
+  KEY_data$Low.Income <- ifelse(KEY_data$Product.Type == "Key.A.PCA", 1, 0)
+  KEY_data$Day.Pass <- ifelse(KEY_data$Product.Type == "Key.D.DAY.PASS", 1, 0)
+  KEY_data$Monthly.Pass <- ifelse(KEY_data$Product.Type == "Key.2.MBTA", 1, 0)
+  KEY_data$Week.Pass <- ifelse(KEY_data$Product.Type == "Key.7.ISS.7DAY", 1, 0)
+  KEY_data$Ten.Ride.Pass <- ifelse(KEY_data$Product.Type == "Key.5.10.RIDE",
+                                   1, 0)
   
   # Select cols
   KEY_data$Source <- "KEY"
   KEY_data$Trip.Number <- as.numeric(KEY_data$Trip.Number)
   KEY_data <- KEY_data %>%
     select(Source, Route.Number, Trip.Number, Time, Ride.Count, 
-           Type, Student, Low.Income, Monthly.Pass, Ten.Ride.Pass)
+           Type, College, Low.Income, Monthly.Pass, Ten.Ride.Pass)
   return(KEY_data)
 }
 
 ###################### MERGE ##################################################
 
-prep_full <- function(wave_filename, inst_filename, ttp_filename, key_filename){
+prep_full <- function(wave,
+                      institution,
+                      institution_summary,
+                      ttp,
+                      key){
   
-  # read in data
-  WAVE_data <- prep_wave(wave_filename, inst_filename)
-  TTP_data <- prep_ttp(ttp_filename)
-  KEY_data <- prep_key(key_filename)
+  # Read in data
+  WAVE_data <- prep_wave(wave, institution, institution_summary)
+  TTP_data <- prep_ttp(ttp)
+  KEY_data <- prep_key(key)
   
-  # combine
+  # Combine
   full_df <- bind_rows(WAVE_data, TTP_data, KEY_data)
   
-  # Make NA's be 0 except Location
-  tag_cols <- c("Student", "Low.Income", "Off.Peak", "Eco.Pass",
-                "Transfer", "Monthly.Pass", "Day.Pass", "One.Hour.Pass", 
-                "Ten.Ride.Pass", "Week.Pass", "Two.Hour.Pass")
-  for (i in tag_cols){
-    full_df[is.na(full_df[,i]),i] <- 0
-  }
+  binary_vars <- c("Low.Income", "Off.Peak", "Eco.Pass", "Transfer",
+                   "Monthly.Pass", "Day.Pass", "One.Hour.Pass", 
+                   "Ten.Ride.Pass", "Week.Pass", "Two.Hour.Pass")
   
-  # Make NA's in Institution.Name be "None"
-  full_df$Institution.Name <- ifelse(is.na(full_df$Institution.Name), 
-                                     "None", full_df$Institution.Name)
-  
-  # Add Trip ID
   full_df <- full_df %>%
+    # Update NA values
+    mutate(
+      # Replace NA values in Institution.Name with values in College
+      Institution.Name = ifelse(is.na(Institution.Name),
+                                College,
+                                Institution.Name),
+      # NA values in Institution either Misc. or College
+      Institution = case_when(
+        !is.na(Institution) ~ Institution,
+        Institution.Name == "None" ~ "Misc. - Other Riders",
+        TRUE ~ "College"),
+      High.School = ifelse(is.na(High.School), "None", High.School)) %>%
+    # Set NA values in remaining columns to 0
+    mutate_at(binary_vars, ~replace_na(., 0)) %>%
+    
+    # Add Trip ID
     arrange(Time) %>%
-    mutate(Trip.Id = 1:nrow(full_df))
-  
-  # Fill in stop number by next stop
-  full_df <- full_df %>%
+    mutate(Trip.Id = 1:nrow(full_df)) %>%
+
+    # Fill in stop number by next stop
     group_by(Route.Number) %>%
     arrange(Time) %>%
     fill(names(.),.direction = "up") %>%
@@ -284,15 +371,15 @@ prep_full <- function(wave_filename, inst_filename, ttp_filename, key_filename){
   full_df$Day.of.Week <- wday(full_df$Time, label = TRUE)
   
   # Change order of columns in the data set
-  full_df <- full_df %>% select("Trip.Id", "Time", "Day.of.Week", 
-                                "Route.Number", "Stop.Number", "Trip.Number", 
+  full_df <- full_df %>% select("Trip.Id", "Time", "Day.of.Week",
+                                "Route.Number", "Stop.Number", "Trip.Number",
                                 "Source", "Ride.Count",
-                                "Type", "Student", "Low.Income", 
-                                "Off.Peak", "Eco.Pass", "Transfer", 
+                                "Type", "College", "High.School", "Low.Income",
+                                "Off.Peak", "Eco.Pass", "Transfer",
                                 "One.Hour.Pass","Two.Hour.Pass", "Day.Pass",
                                 "Ten.Ride.Pass", "Week.Pass", "Monthly.Pass",
-                                "Institution.Name")
-  
+                                "Institution.Name", "Institution")
+
   return(full_df)
 }
 
@@ -305,5 +392,3 @@ prep_full <- function(wave_filename, inst_filename, ttp_filename, key_filename){
 #key_filename <- "data/CashFareBox_August23.csv"
 #full_df <- prep_full(wave_filename, inst_filename, ttp_filename, key_filename)
 #write.csv(full_df, "data/MergedData.csv", row.names = FALSE)
-
-
