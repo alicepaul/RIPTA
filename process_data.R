@@ -3,9 +3,7 @@ library(lubridate)
 
 ################## WAVE DATA ##################################################
 
-prep_wave <- function(wave_file,
-                      institution_file = NULL,
-                      institution_summary_file = NULL) {
+prep_wave <- function(wave_file, institution_file = NULL) {
   
   # Read in data
   WAVE_data <- read.csv(wave_file)
@@ -77,10 +75,8 @@ prep_wave <- function(wave_file,
     WAVE_data$Transaction.Type %in% c("Transfer"), 1, 0)
   
   # Add in institutional data
-  # Ensure both files are provided when incorporating institutional data
-  if (!(is.null(institution_file) || is.null(institution_summary_file))) {
+  if (!is.null(institution_file)) {
     Institution_data <- read.csv(institution_file)
-    
     # update time and select cols
     Institution_data$Time <- as.POSIXct(paste(Institution_data$Tap.Date, 
                                               Institution_data$Tap.Time),
@@ -98,65 +94,64 @@ prep_wave <- function(wave_file,
     
     # Create column for college
     WAVE_data$College <- case_when(
-      WAVE_data$Institution.Name == "CCRI" ~ "CCRI",
-      WAVE_data$Institution.Name == "URI Campus Store" ~ "URI",
-      WAVE_data$Institution.Name == "Johnson & Wales University" ~ "J&W",
-      WAVE_data$Institution.Name == "Roger Williams University" ~ "RWU",
+      WAVE_data$Institution.Name == "CCRI" ~ "Community College of Rhode Island",
+      WAVE_data$Institution.Name == "URI Campus Store" ~ "University of Rhode Island",
+      WAVE_data$Institution.Name == "Johnson & Wales University" ~ "Johnson & Wales",
+      WAVE_data$Institution.Name == "Roger Williams University" ~ "Roger Williams",
       TRUE ~ "None")
     
     # Create column for high school
     WAVE_data$High.School <- case_when(
       WAVE_data$Institution.Name == "Providence Public School Department"
-      ~ "PPSD",
+      ~ "Providence Public School Department",
       WAVE_data$Institution.Name == "The Met School"
-      ~ "Met",
+      ~ "The Met School",
       WAVE_data$Institution.Name == "RI Nurses - Institutional Middle College"
-      ~ "RINI",
+      ~ "RI Nurses - Institutional Middle College",
       WAVE_data$Institution.Name == "Village Green Charter School" 
-      ~ "VGCS",
+      ~ "Village Green Charter School",
       WAVE_data$Institution.Name == "Achievement First RI"
-      ~ "AFRI",
+      ~ "Achievement First RI",
       WAVE_data$Institution.Name == "Paul Cuffee School"
-      ~ "PCS",
+      ~ "Paul Cuffee School",
       WAVE_data$Institution.Name == "Charette Charter School"
-      ~ "CCS",
+      ~ "Charette Charter School",
       WAVE_data$Institution.Name == "Nowell Leadership Academy"
-      ~ "NLA",
+      ~ "Nowell Leadership Academy",
       WAVE_data$Institution.Name == "Trinity Academy for the Performing Arts"
-      ~ "TAPA",
+      ~ "Trinity Academy for the Performing Arts",
       WAVE_data$Institution.Name == "Youth Build Prep Academy"
-      ~ "YPA",
+      ~ "Youth Build Prep Academy",
       WAVE_data$Institution.Name == "Times2 Academy"
-      ~ "TIMES2",
+      ~ "Times2 Academy",
       WAVE_data$Institution.Name == "Highlander Charter School"
-      ~ "HCS",
+      ~ "Highlander Charter School",
       WAVE_data$Institution.Name == "NEL/CPS Construction and Career Academy"
-      ~ "CCA",
+      ~ "NEL/CPS Construction and Career Academy",
       WAVE_data$Institution.Name == "Urban Collaborative Program"
-      ~ "UCP",
+      ~ "Urban Collaborative Program",
       WAVE_data$Institution.Name == "Blackstone Academy"
-      ~ "Blackstone",
+      ~ "Blackstone Academy",
       WAVE_data$Institution.Name == "360 High School"
-      ~ "360",
+      ~ "360 High School",
       WAVE_data$Institution.Name == "Central High School"
-      ~ "Central",
+      ~ "Central High School",
       WAVE_data$Institution.Name == "Davies Career & Tech High School"
-      ~ "Davies",
+      ~ "Davies Career & Tech High School",
       WAVE_data$Institution.Name == "Bishop Hendricken HS"
-      ~ "BHHS",
+      ~ "Bishop Hendricken HS",
       WAVE_data$Institution.Name == "Pawtucket School Department"
-      ~ "PSD",
+      ~ "Pawtucket School Department",
       WAVE_data$Institution.Name == "E-Cubed Academy"
-      ~ "E-Cubed",
+      ~ "E-Cubed Academy",
       WAVE_data$Institution.Name == "Providence Career Technical HS"
-      ~ "PCTHS",
+      ~ "Providence Career Technical HS",
       WAVE_data$Institution.Name == "Warwick Schools"
-      ~ "Warwick",
+      ~ "Warwick Schools",
       TRUE ~ "None")
     
     # Create column for institution type
-    name_to_type <- read.csv(institution_summary_file) %>%
-      select(Institution.Name, Institution.Type) %>%
+    name_to_type <- readRDS("./data/institution_name_to_type.rds")
       # Convert string None to NA to merge with NA values
       # in Institution.Name
       mutate(Institution.Name = replace(Institution.Name, 
@@ -232,15 +227,15 @@ prep_ttp <- function(ttp_filename) {
   
   # Adding Tags
   TTP_data$College <- case_when(
-    TTP_data$Product.Type == "TTP8" ~ "Bryant", 
-    TTP_data$Product.Type == "TTP10" ~ "SRU", 
-    TTP_data$Product.Type == "TTP12" ~ "Brown", 
-    TTP_data$Product.Type == "TTP23" ~ "RISD", 
-    TTP_data$Product.Type == "TTP26" ~ "RWU", 
-    TTP_data$Product.Type %in% c("TTP28", "TTP38") ~ "J&W", 
-    TTP_data$Product.Type == "TTP30" ~ "URI", 
-    TTP_data$Product.Type == "TTP32" ~ "RIC", 
-    TTP_data$Product.Type == "TTP40" ~ "PC", 
+    TTP_data$Product.Type == "TTP8" ~ "Bryant",
+    TTP_data$Product.Type == "TTP10" ~ "Salve Regina",
+    TTP_data$Product.Type == "TTP12" ~ "Brown",
+    TTP_data$Product.Type == "TTP23" ~ "RISD",
+    TTP_data$Product.Type == "TTP26" ~ "Roger Williams",
+    TTP_data$Product.Type %in% c("TTP28", "TTP38") ~ "Johnson & Wales",
+    TTP_data$Product.Type == "TTP30" ~ "University of Rhode Island",
+    TTP_data$Product.Type == "TTP32" ~ "Rhode Island College",
+    TTP_data$Product.Type == "TTP40" ~ "Providence College",
     TRUE ~ "None", 
   )
   
@@ -323,14 +318,10 @@ prep_key <- function(key_filename) {
 
 ###################### MERGE ##################################################
 
-prep_full <- function(wave,
-                      institution,
-                      institution_summary,
-                      ttp,
-                      key){
+prep_full <- function(wave, institution, ttp, key) {
   
   # Read in data
-  WAVE_data <- prep_wave(wave, institution, institution_summary)
+  WAVE_data <- prep_wave(wave, institution)
   TTP_data <- prep_ttp(ttp)
   KEY_data <- prep_key(key)
   
