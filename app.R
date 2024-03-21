@@ -10,6 +10,7 @@ library(hms)
 library(sf)
 library(DT)
 library(sodium)
+library(tidycensus)
 
 # Update max file upload size
 options(shiny.maxRequestSize = 200*1024^2)
@@ -18,37 +19,42 @@ options(shiny.maxRequestSize = 200*1024^2)
 source("process_data.R")
 source("utils.R")
 
+# API key
+# census_api_key("Enter key here", overwite = TRUE, install = TRUE)
+
 # Constants
 # Tag columns
-TAG_COLS <- c("Student", "Low.Income", "Off.Peak", "Eco.Pass", "Transfer",
-              "One.Hour.Pass", "Two.Hour.Pass", "Day.Pass", "Ten.Ride.Pass",
-              "Week.Pass", "Monthly.Pass")
+STUDENT_TAGS <- c("College", "High.School")
+BINARY_TAGS <- c("Low.Income", "Off.Peak", "Eco.Pass", "Transfer",
+                 "One.Hour.Pass", "Two.Hour.Pass", "Day.Pass",
+                 "Ten.Ride.Pass", "Week.Pass", "Monthly.Pass")
+ALL_TAGS <- c(STUDENT_TAGS, BINARY_TAGS, "Institution")
 
 # csv file types
 CSV_TYPES <- c("text/csv", "text/comma-separated-values", "text/plain", ".csv")
 # Keys for decryption
-PUBLIC_KEY <- "c0 25 1a b3 6c 3d 79 a5 41 8e 67 07 41 c4 66 b7 eb 53 8c ec fd df b5 81 60 37 3f 8b 7e 8a f1 0d"
-
+PUBLIC_KEY <- "68 ab 9c 12 03 aa 76 ef 9a 54 0b a7 5f dc 2a cb 3c 45 3c 44 d2 04 0a 80 cd 88 84 05 5e 9a cb 20"
 # gtfs data
-# stops_gfts <- read.csv("gtfs/stops.txt")
+stops_gfts <- read.csv("gtfs/stops.txt")
 
 ui <- fluidPage(
   titlePanel("RIPTA Bus Ride Analysis"),
   p("Welcome! This app is designed to visualize and summarize RIPTA ridership. 
-  If you have previously processed data, you can upload it using the sidebar. 
-  You can also load existing data hosted on the server with valid credentials. 
+  You can load existing data hosted on the server with valid credentials or 
+  upload previously processed data by clicking the checkbox in the sidebar. 
   Otherwise, please start by going to the last tab to upload your RIPTA data 
   sources. The app will process and merge the data, which you can then download. 
-  Tab 1 displays a summary table on ridership, Tab 2 displays ridership by 
-  route, and Tab 3 displays a route specific summary table and plots."),
+  Tab 1 summarizes overall ridership, Tab 2 displays ridership by route, and 
+  Tab 3 displays a route specific summary table and plots."),
   br(),
   p("This app was created by John Chung, Morgan Cunningham, and Alice Paul. 
     Please email Dr. Paul (alice_paul@brown.edu) with any inquiries."),
   sidebarLayout(
     sidebarPanel(
-      fileInput("mergedInput", "Processed Data Upload", accept = CSV_TYPES),
-      #passwordInput("password", "Enter Password"),
-      #actionButton("passwordButton", "Submit"),
+      passwordInput("password", "Enter Password to Load Data"),
+      actionButton("passwordButton", "Submit"),
+      checkboxInput("uploadOption", "Upload Processed Data"),
+      uiOutput("uploadDisplay"),
       selectInput("typeInput", "Type of Rider",
                          choices = c("All Types", "Adult", "Senior", "Disabled",
                                      "Senior/Disabled", 
@@ -86,16 +92,22 @@ ui <- fluidPage(
        ),
        tabPanel(
          "Ridership by Route",
-          br(),
+         br(),
          p("This tab compares ridership across routes. The graph displays the 
-           average number of rides per minute for each route and sorts them in 
-           descending order. In addition to the average number of rides per 
-           minute, the table below the graph shows other ridership 
-           information that can be compared."),
-          plotlyOutput("plot_ridership", height = "800px"),
-          br(),
-          dataTableOutput("table_ridership"),
-          br()
+            average number of rides per minute for each route and sorts them in 
+            descending order. In addition to the average number of rides per 
+            minute, the table below the graph shows other ridership 
+            information that can be compared."),
+         fluidRow(
+           column(width = 2,
+                  radioButtons("ride_metric",
+                               "Ridership Metric",
+                               c("Per Minute" = "minute",
+                                 "Per Mile" = "mile"))),
+           column(width = 10,
+                  plotlyOutput("plot_ridership", height = "800px"))),
+         br(),
+         dataTableOutput("table_ridership")
        ),
        tabPanel(
          "Route Summary",
@@ -112,10 +124,11 @@ ui <- fluidPage(
            column(width = 4,
               htmlOutput("summary_route")
            ),
-           column(width = 8, 
+           column(width = 8,
                 plotOutput("route_plot_time"),
                 br(),
-                leafletOutput("route_plot_stops")
+                leafletOutput("route_plot_stops"),
+                leafletOutput("test_census")
            )
          )
        ),
@@ -152,22 +165,29 @@ ui <- fluidPage(
 
 
 server <- function(input, output) {
+  # Display file upload UI when user
+  # enables option to upload data
+  output$uploadDisplay <- renderUI({
+    if (input$uploadOption) {
+      fileInput("mergedInput", "", accept = CSV_TYPES)
+    }
+  })
   
   # Load data
   merged_data <- reactiveVal()
   # Get password-protected data hosted on server
-  #observeEvent(input$passwordButton, {
-  #  private_key <- sha256(charToRaw(input$password))
-  #  # Validate string representation of private key
-  #  if (paste(pubkey(private_key), collapse = " ") == PUBLIC_KEY) {
-  #    encrypted_data <- readRDS("./data/EncryptedMergedData.rds")
-  #    decrypted_data <- unserialize(simple_decrypt(encrypted_data, 
-  #                                                 private_key))
-  #    merged_data(decrypted_data)
-  #  } else {
-  #    showNotification("Incorrect password", type = "error")
-  #  }
-  #})
+  observeEvent(input$passwordButton, {
+   private_key <- sha256(charToRaw(input$password))
+   # Validate string representation of private key
+   if (paste(pubkey(private_key), collapse = " ") == PUBLIC_KEY) {
+     encrypted_data <- readRDS("./data/encrypted_data.rds")
+     decrypted_data <- unserialize(simple_decrypt(encrypted_data,
+                                                  private_key))
+     merged_data(decrypted_data)
+   } else {
+     showNotification("Incorrect password", type = "error")
+   }
+  })
   
   # Get data through the file upload
   observe({
@@ -199,8 +219,8 @@ server <- function(input, output) {
   })
   
   # Get active tags
-  active_tags <- reactive({
-    active_tags <- TAG_COLS
+  active_binary_tags <- reactive({
+    active_tags <- BINARY_TAGS
     if (is.null(all_dates())) {
       return(active_tags)
     }
@@ -212,9 +232,15 @@ server <- function(input, output) {
     return(active_tags)
   })
   
+  # Filter tags are active tags that the user can filter in the UI
+  filter_tags <- reactive({c(STUDENT_TAGS, active_binary_tags())})
+  # Active tags are all active tags available in the displayed
+  # tables
+  active_tags <- reactive({c("Institution", filter_tags())})
+  
   output$tagFilter<- renderUI({
     checkboxGroupInput("tagInput", "Rider Tag(s)",
-                       choices = active_tags())
+                       choices = filter_tags())
   })
   
   # Filter data based on user inputs
@@ -251,7 +277,9 @@ server <- function(input, output) {
     # Filter by rider tags
     if (length(input$tagInput) > 0) {
       tags <- input$tagInput
-      data <- data %>% filter(if_any(.cols = tags, ~ . == 1))
+      data <- data %>% filter(if_any(.cols=tags,
+                                     # Second condition is for student tags
+                                     ~ . == 1 | (. != 0 & . != "None")))
     }
     
     # Filter by days of travel
@@ -272,22 +300,22 @@ server <- function(input, output) {
     }
     return(data)
   })
-
+  
   # Table summarizing ridership characteristics
   output$summary_ridership <- render_gt({
     filtered <- filtered_data()
     req(nrow(filtered) > 0)
     
-    tab <- filtered %>% tbl_summary(include = c("Source", "Day.of.Week",
-                                                active_tags()), 
-                                    type = list(active_tags() ~ "dichotomous")
-                                    ) %>%
+    tags <- c("Source", "Day.of.Week", "Institution", active_binary_tags())
+    tab <- filtered %>%
+      tbl_summary(include = tags,
+                  type = list(active_binary_tags() ~ "dichotomous")) %>%
       as_gt()
     return(tab)
   })
   
-  # Summary of ridership times for each route
-  route_times <- reactive({
+  # Times per day for each route
+  times_per_day <- reactive({
     filtered <- filtered_data()
     req(nrow(filtered) > 0)
     
@@ -297,44 +325,76 @@ server <- function(input, output) {
       group_by(Route.Number, Date, Trip.Number) %>%
       # Get time for a single trip in minutes
       summarize(Trip.Time = (max(Numeric.Time)-min(Numeric.Time))/60,
-                .groups="drop_last") %>%
-      # Get times for each route for each day
-      summarize(Route.Time.Per.Day = sum(Trip.Time),
                 .groups = "drop_last") %>%
-      # Get summary of route times
-      summarize(Num.Days = n(),
-                Total.Time = sum(Route.Time.Per.Day),
-                Avg.Time.Per.Day = mean(Route.Time.Per.Day),
-                SD.Time.Per.Day = sd(Route.Time.Per.Day))
+      # Get times for each route for each day
+      summarize(Time.Per.Day = sum(Trip.Time), .groups = "drop_last")
+  })
+  
+  # Miles per day for each route
+  miles_per_day <- reactive({
+    filtered <- filtered_data()
+    req(nrow(filtered) > 0)
+    
+    filtered %>%
+      # Remove trip 99
+      filter(Trip.Number != 99) %>%
+      mutate(Date = as.Date(Time),
+             Numeric.Time = as.numeric(Time),
+             Time = as.character(Time),
+             Stop.Number = as.numeric(str_sub(Stop.Number, 2))) %>%
+      inner_join(stops_gfts, by = c("Stop.Number" = "stop_id")) %>%
+      group_by(Route.Number, Date, Trip.Number, Stop.Number) %>%
+      # Only keep first row since we care about the
+      # coordinates of each stop rather than the
+      # ride counts
+      filter(row_number() == 1) %>%
+      ungroup(Stop.Number) %>%
+      mutate(stop_lat_lag = lag(stop_lat, order_by = Numeric.Time),
+             stop_lon_lag = lag(stop_lon, order_by = Numeric.Time),
+             miles = calculate_miles(stop_lon,
+                                     stop_lat,
+                                     stop_lon_lag,
+                                     stop_lat_lag)) %>%
+      summarize(Miles.Per.Trip = sum(miles),
+                .groups="drop_last") %>%
+      # Total miles per day
+      summarize(Miles.Per.Day = sum(Miles.Per.Trip),
+                .groups = "drop_last")
   })
   
   # Summary of ridership for each route
   route_ridership <- reactive({
     filtered <- filtered_data()
-    route_times <- route_times()
-    req(nrow(filtered) > 0 && nrow(route_times) > 0)
+    times_df <- times_per_day()
+    miles_df <- miles_per_day()
+    req(nrow(filtered) > 0 &&
+          nrow(times_df) > 0 &&
+          nrow(miles_df))
     
-    # Calculate total riders per route and summarize
     filtered %>%
-      group_by(Route.Number) %>%
-      summarize(Total.Rides = sum(Ride.Count)) %>%
-      inner_join(route_times,
-                 by = "Route.Number") %>%
+      mutate(Date = as.Date(Time)) %>%
+      group_by(Route.Number, Date) %>%
+      summarize(Rides.Per.Day = sum(Ride.Count), 
+                .groups = "drop_last") %>%
+      # Merge
+      inner_join(times_df, by = c("Route.Number", "Date")) %>%
+      inner_join(miles_df, by = c("Route.Number", "Date")) %>%
+      # Drop rows (days) with 0 minutes or miles
+      filter(Time.Per.Day > 0,
+             Miles.Per.Day > 0) %>%
+      # Compute daily ridership stats
       mutate(Route.Number = as.factor(Route.Number),
-             Avg.Time.Per.Day = round(Avg.Time.Per.Day, 3),
-             SD.Time.Per.Day = round(SD.Time.Per.Day, 3),
-             # Avoid division by 0
-             Avg.Rides.Per.Day = ifelse(Num.Days == 0,
-                                        0,
-                                        round(Total.Rides / Num.Days, 3)),
-             Avg.Rides.Per.Minute = ifelse(Total.Time == 0,
-                                           0,
-                                           round(Total.Rides / 
-                                                   as.numeric(Total.Time),
-                                                 3))) %>%
-      arrange(desc(Avg.Rides.Per.Minute)) %>%
-      select(c(Route.Number, Avg.Time.Per.Day, SD.Time.Per.Day,
-               Total.Rides, Avg.Rides.Per.Day, Avg.Rides.Per.Minute))
+             Rides.Per.Minute = Rides.Per.Day / Time.Per.Day,
+             Rides.Per.Mile = Rides.Per.Day / Miles.Per.Day) %>%
+      # Compute averages
+      summarize(Avg.Time.Per.Day = round(mean(Time.Per.Day), 3),
+                SD.Time.Per.Day = round(sd(Time.Per.Day), 3),
+                Num.Days = n(),
+                Total.Rides = sum(Rides.Per.Day),
+                Avg.Rides.Per.Minute = round(mean(Rides.Per.Minute), 3),
+                Avg.Rides.Per.Mile = round(mean(Rides.Per.Mile), 3)) %>%
+      mutate(Avg.Rides.Per.Day = round(Total.Rides / Num.Days, 3)) %>%
+      select(-c(Num.Days))
   })
   
   # Render the table based on filtered data
@@ -346,8 +406,9 @@ server <- function(input, output) {
                       "Average Min. Per Day",
                       "Std Dev Min. Per Day",
                       "Total Rides",
-                      "Average Rides Per Day",
-                      "Average Rides Per Minute")
+                      "Average Rides Per Minute",
+                      "Average Rides Per Mile",
+                      "Average Rides Per Day")
     return(df)
   })
   
@@ -356,21 +417,41 @@ server <- function(input, output) {
     df <- route_ridership()
     req(nrow(df) > 0)
     
-    # horizontal bar plot
-    p <- ggplot(df, aes(x = Avg.Rides.Per.Minute,
-                        y = fct_reorder(Route.Number,
-                                        Avg.Rides.Per.Minute),
-                        text = paste0("Route: ",
-                                      Route.Number,
-                                      "\n Ridership: ",
-                                      Avg.Rides.Per.Minute))) +
+    metric <- switch(input$ride_metric,
+                     minute = "minute",
+                     mile = "mile")
+    
+    if (metric == "minute") {
+      # Horizontal bar plot
+      plot <- ggplot(df,
+                     aes(x = Avg.Rides.Per.Minute,
+                         y = fct_reorder(Route.Number,
+                                         Avg.Rides.Per.Minute),
+                         text = paste0("Route: ",
+                                       Route.Number,
+                                       "\n Ridership: ",
+                                       Avg.Rides.Per.Minute))) +
+        labs(x = "Average Riders Per Minute",
+             y = "Route",
+             title = "Average Rides Per Minute Across Routes")
+    } else {
+      plot <- ggplot(df,
+                     aes(x = Avg.Rides.Per.Mile,
+                         y = fct_reorder(Route.Number,
+                                         Avg.Rides.Per.Mile),
+                         text = paste0("Route: ",
+                                       Route.Number,
+                                       "\n Ridership: ",
+                                       Avg.Rides.Per.Mile))) +
+        labs(x = "Average Riders Per Mile",
+             y = "Route",
+             title = "Average Rides Per Mile Across Routes")
+    }
+    plot <- plot +
       geom_col(fill = "skyblue") +
-      labs(x = "Average Riders Per Minute",
-           y = "Route",
-           title = "Average Rides Per Minute Across Routes") +
       theme_minimal() +
       theme(axis.text.y = element_text(size = 9))
-    ggplotly(p, tooltip = "text")
+    ggplotly(plot, tooltip = "text")
   })
   
   # Get routes available by filters
@@ -396,10 +477,10 @@ server <- function(input, output) {
     filtered <- rte_filtered()
     req(nrow(filtered) > 0)
     
-    tab <- filtered %>% tbl_summary(include = c("Source", "Day.of.Week",
-                                                active_tags()),
-                                    type = list(active_tags() ~ "dichotomous")
-                                    ) %>%
+    tags <- c("Source", "Day.of.Week", "Institution", active_binary_tags())
+    tab <- filtered %>%
+      tbl_summary(include = tags,
+                  type = list(active_binary_tags() ~ "dichotomous")) %>%
       as_gt()
     return(tab)
   })
@@ -458,14 +539,14 @@ server <- function(input, output) {
       theme_minimal()
   })
   
-  # Plot ridership on a route by stop
-  output$route_plot_stops <- renderLeaflet({
+  # Ridership on a route by stop
+  route_stops <- reactive({
     # Find trips per stop
     df <- rte_filtered()
     req(nrow(df) > 0)
     
     num_days <- n_distinct(as.Date(df$Time))
-    stop_data <- df %>%
+    stops_df <- df %>%
       group_by(Stop.Number) %>%
       summarize(Avg.Rides = round(sum(Ride.Count) / num_days, 3)) %>%
       mutate(Stop.Number = as.numeric(str_sub(Stop.Number, 2))) %>%
@@ -474,29 +555,65 @@ server <- function(input, output) {
       select(Stop.Number, stop_lat, stop_lon, Avg.Rides)
     
     # Ensure stop data exists
-    req(nrow(stop_data) > 0)
+    req(nrow(stops_df) > 0)
     
     # Create breaks via quantiles
     # Remove duplicates because quantiles may be
     # same with limited data
-    breaks <- unique(quantile(stop_data$Avg.Rides, 
+    breaks <- unique(quantile(stops_df$Avg.Rides,
                               probs = seq(0, 1, 0.2)))
     
-    stop_data <- mutate(stop_data, 
-                        Rides.Group = cut(Avg.Rides, 
-                                          breaks, 
-                                          include.lowest = T))
+    stops_df <- mutate(stops_df,
+                       Rides.Group = cut(Avg.Rides,
+                                         breaks,
+                                         include.lowest = T))
+    return(stops_df)
+  })
+  
+  # Census data at tract level
+  census_data <- reactive({
+    get_acs(geography = "tract",
+            variables = "B01003_001",
+            state = "RI",
+            geometry = TRUE) %>%
+      st_transform("+proj=longlat +datum=WGS84")
+  })
+  
+  output$route_plot_stops <- renderLeaflet({
+    stops_df <- route_stops()
+    census_df <- census_data()
+    req(nrow(stops_df) > 0 && nrow(census_df) > 0)
     
-    # plot
-    pal <- colorFactor(palette = 'RdPu', stop_data$Rides.Group)
-    leaflet(data = stop_data) %>%
+    # Plot
+    stops_pal <- colorFactor(palette = 'RdPu', stops_df$Rides.Group)
+    census_pal <- colorQuantile(palette = "viridis",
+                                domain = census_df$estimate,
+                                n = 5)
+    
+    leaflet() %>%
       addProviderTiles(providers$CartoDB.Positron) %>%
-      addCircleMarkers(lng = ~stop_lon, lat = ~stop_lat, 
-                   popup = as.character(stop_data$Avg.Rides),
-                   radius = 2, opacity = 1,
-                   col = ~pal(Rides.Group)) %>%
-      addLegend('bottomright', pal = pal, values = stop_data$Rides.Group,
-                opacity = 1)
+      # Stop coordinates
+      addCircleMarkers(data = stops_df,
+                       lng = ~stop_lon,
+                       lat = ~stop_lat,
+                       popup = as.character(stops_df$Avg.Rides),
+                       radius = 2,
+                       opacity = 1,
+                       col = ~stops_pal(Rides.Group)) %>%
+      addPolygons(data = census_df,
+                  color = ~ census_pal(estimate),
+                  weight = 0.5,
+                  fillOpacity = 0.1) %>%
+      addLegend(position = 'topright',
+                pal = stops_pal,
+                values = stops_df$Rides.Group,
+                opacity = 1,
+                title = "Number of Rides") %>%
+      addLegend(position = "bottomright",
+                pal = census_pal,
+                values = census_df$estimate, 
+                opacity = 1,
+                title = "Population Quantiles")
   })
   
   # Action button to process dialog
