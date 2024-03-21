@@ -151,7 +151,7 @@ prep_wave <- function(wave_file, institution_file = NULL) {
       TRUE ~ "None")
     
     # Create column for institution type
-    name_to_type <- readRDS("./data/institution_name_to_type.rds")
+    name_to_type <- readRDS("./data/institution_name_to_type.rds") %>%
       # Convert string None to NA to merge with NA values
       # in Institution.Name
       mutate(Institution.Name = replace(Institution.Name, 
