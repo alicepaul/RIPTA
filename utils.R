@@ -1,3 +1,5 @@
+library(geosphere)
+
 plot_ridership_by_time <- function(data) {
   #' Plots route ridership over time.
   #'
@@ -30,4 +32,22 @@ plot_ridership_by_time <- function(data) {
                       ymin = Avg.Riders - SE,
                       ymax = Avg.Riders + SE), width = 0.2) +
     theme_minimal()
+}
+
+calculate_miles <- function(start_lons, start_lats, end_lons, end_lats) {
+  miles_helper <- function(idx) {
+    lon1 <- start_lons[idx]
+    lat1 <- start_lats[idx]
+    lon2 <- end_lons[idx]
+    lat2 <- end_lats[idx]
+    
+    if (is.na(lon2) || is.na(lat2)) {
+      return(0)
+    }
+    meters <- distHaversine(c(lon1, lat1), c(lon2, lat2))
+    # Convert to miles
+    return(meters / 1609.34)
+  }
+  
+  sapply(1:length(start_lons), miles_helper)
 }
