@@ -11,6 +11,7 @@ library(sf)
 library(DT)
 library(sodium)
 library(tidycensus)
+library(tigris)
 
 # Update max file upload size
 options(shiny.maxRequestSize = 200*1024^2)
@@ -34,8 +35,10 @@ ALL_TAGS <- c(STUDENT_TAGS, BINARY_TAGS, "Institution")
 CSV_TYPES <- c("text/csv", "text/comma-separated-values", "text/plain", ".csv")
 # Keys for decryption
 PUBLIC_KEY <- "68 ab 9c 12 03 aa 76 ef 9a 54 0b a7 5f dc 2a cb 3c 45 3c 44 d2 04 0a 80 cd 88 84 05 5e 9a cb 20"
-# gtfs data
+# Data
 stops_gfts <- read.csv("gtfs/stops.txt")
+census_df <-readRDS("./data/census_data.rds")
+RI_ids <- tracts("RI", year=2022, class="sf") %>% select(GEOID)
 
 ui <- fluidPage(
   titlePanel("RIPTA Bus Ride Analysis"),
@@ -127,8 +130,21 @@ ui <- fluidPage(
            column(width = 8,
                 plotOutput("route_plot_time"),
                 br(),
-                leafletOutput("route_plot_stops"),
-                leafletOutput("test_census")
+                fluidRow(
+                  column(width = 2,
+                         radioButtons("census_metric",
+                                      "Census Metric",
+                                      c("Population" = "population",
+                                        "Household Income" = "income",
+                                        "Below Poverty Line" = "poverty",
+                                        "Employed" = "employed",
+                                        "Commute via Car" = "car_commute",
+                                        "Commute via Carpool" = "carpool",
+                                        "Commute via Public Transp." = "public_transp",
+                                        "No Access to Vehicle" = "no_vehicle"))),
+                  column(width = 10,
+                         h4(textOutput("census_avg")),
+                         leafletOutput("route_plot_stops")))
            )
          )
        ),
@@ -417,37 +433,24 @@ server <- function(input, output) {
     df <- route_ridership()
     req(nrow(df) > 0)
     
-    metric <- switch(input$ride_metric,
-                     minute = "minute",
-                     mile = "mile")
+    col_name <- switch(input$ride_metric,
+                       minute = "Avg.Rides.Per.Minute",
+                       mile = "Avg.Rides.Per.Mile")
     
-    if (metric == "minute") {
-      # Horizontal bar plot
-      plot <- ggplot(df,
-                     aes(x = Avg.Rides.Per.Minute,
-                         y = fct_reorder(Route.Number,
-                                         Avg.Rides.Per.Minute),
-                         text = paste0("Route: ",
-                                       Route.Number,
-                                       "\n Ridership: ",
-                                       Avg.Rides.Per.Minute))) +
-        labs(x = "Average Riders Per Minute",
-             y = "Route",
-             title = "Average Rides Per Minute Across Routes")
-    } else {
-      plot <- ggplot(df,
-                     aes(x = Avg.Rides.Per.Mile,
-                         y = fct_reorder(Route.Number,
-                                         Avg.Rides.Per.Mile),
-                         text = paste0("Route: ",
-                                       Route.Number,
-                                       "\n Ridership: ",
-                                       Avg.Rides.Per.Mile))) +
-        labs(x = "Average Riders Per Mile",
-             y = "Route",
-             title = "Average Rides Per Mile Across Routes")
-    }
-    plot <- plot +
+    # Horizontal bar plot
+    plot <- ggplot(df,
+                   aes(x = .data[[col_name]],
+                       y = fct_reorder(Route.Number,
+                                       .data[[col_name]]),
+                       text = paste0("Route: ",
+                                     Route.Number,
+                                     "\n Ridership: ",
+                                     .data[[col_name]]))) +
+      labs(x = paste("Average Riders Per", input$ride_metric),
+           y = "Route",
+           title = paste("Average Rides Per",
+                         input$ride_metric,
+                         "Across Routes")) +
       geom_col(fill = "skyblue") +
       theme_minimal() +
       theme(axis.text.y = element_text(size = 9))
@@ -550,45 +553,69 @@ server <- function(input, output) {
       group_by(Stop.Number) %>%
       summarize(Avg.Rides = round(sum(Ride.Count) / num_days, 3)) %>%
       mutate(Stop.Number = as.numeric(str_sub(Stop.Number, 2))) %>%
-      left_join(stops_gfts, by = c("Stop.Number" = "stop_id")) %>%
-      filter(!is.na(Avg.Rides) & !is.na(Stop.Number)) %>%
-      select(Stop.Number, stop_lat, stop_lon, Avg.Rides)
-    
-    # Ensure stop data exists
-    req(nrow(stops_df) > 0)
-    
-    # Create breaks via quantiles
-    # Remove duplicates because quantiles may be
-    # same with limited data
-    breaks <- unique(quantile(stops_df$Avg.Rides,
-                              probs = seq(0, 1, 0.2)))
-    
-    stops_df <- mutate(stops_df,
-                       Rides.Group = cut(Avg.Rides,
-                                         breaks,
-                                         include.lowest = T))
+      inner_join(stops_gfts, by = c("Stop.Number" = "stop_id")) %>%
+      select(Stop.Number, stop_lat, stop_lon, Avg.Rides) %>%
+      # Map coordinates to census tract
+      st_as_sf(coords = c("stop_lon", "stop_lat"),
+               remove = FALSE,
+               crs = "+proj=longlat +datum=WGS84")
     return(stops_df)
   })
   
-  # Census data at tract level
-  census_data <- reactive({
-    get_acs(geography = "tract",
-            variables = "B01003_001",
-            state = "RI",
-            geometry = TRUE) %>%
-      st_transform("+proj=longlat +datum=WGS84")
+  stops_with_census <- reactive({
+    stops_df <- route_stops()
+    req(nrow(stops_df) > 0)
+
+    # Filter census data by metric
+    # selected by user
+    metric <- switch(input$census_metric,
+                     population = "B01003_001",
+                     income = "B19013_001",
+                     poverty = "B05010_002",
+                     employed = "B23025_001",
+                     car_commute = "B08301_002",
+                     carpool = "B08301_004",
+                     public_transp = "B08301_010",
+                     no_vehicle = "B08141_002")
+    filtered_census_df <- census_df[census_df$variable == metric, ] %>%
+      drop_na() %>%
+      # Create copy of geometry column because
+      # it gets overwritten when merging
+      mutate(poly_coords = geometry)
+
+    # Merge
+    merged_df <- filtered_census_df %>%
+      st_join(stops_df)
+    return(merged_df)
   })
   
   output$route_plot_stops <- renderLeaflet({
-    stops_df <- route_stops()
-    census_df <- census_data()
-    req(nrow(stops_df) > 0 && nrow(census_df) > 0)
+    all_tracts_df <- stops_with_census()
+    req(nrow(all_tracts_df) > 0)
+    
+    stops_df <- all_tracts_df %>% drop_na()
+    title <- switch(input$census_metric,
+                    population = "Population Count",
+                    income = "Median Household Income",
+                    poverty = "Num. Below Poverty Line",
+                    employed = "Employment Count",
+                    car_commute = "Num. Car Commuters",
+                    carpool = "Num. Carpoolers",
+                    public_transp = "Num. Take Public Transp.",
+                    no_vehicle = "Num. Without Vehicle")
     
     # Plot
-    stops_pal <- colorFactor(palette = 'RdPu', stops_df$Rides.Group)
-    census_pal <- colorQuantile(palette = "viridis",
-                                domain = census_df$estimate,
-                                n = 5)
+    # Create breaks via quantiles
+    # Remove duplicates because quantiles
+    # may be same with limited data
+    breaks <- unique(quantile(stops_df$Avg.Rides,
+                              probs = seq(0, 1, 0.2)))
+    stops_pal <- colorBin(palette = 'RdPu',
+                          stops_df$Avg.Rides,
+                          breaks)
+    census_pal <- colorBin(palette = "viridis",
+                           all_tracts_df$estimate,
+                           5)
     
     leaflet() %>%
       addProviderTiles(providers$CartoDB.Positron) %>%
@@ -599,21 +626,31 @@ server <- function(input, output) {
                        popup = as.character(stops_df$Avg.Rides),
                        radius = 2,
                        opacity = 1,
-                       col = ~stops_pal(Rides.Group)) %>%
-      addPolygons(data = census_df,
-                  color = ~ census_pal(estimate),
+                       col = ~stops_pal(Avg.Rides)) %>%
+      addPolygons(data = all_tracts_df,
+                  color = ~census_pal(estimate),
                   weight = 0.5,
                   fillOpacity = 0.1) %>%
       addLegend(position = 'topright',
                 pal = stops_pal,
-                values = stops_df$Rides.Group,
+                values = stops_df$Avg.Rides,
                 opacity = 1,
-                title = "Number of Rides") %>%
+                title = "Ride Count") %>%
       addLegend(position = "bottomright",
                 pal = census_pal,
-                values = census_df$estimate, 
+                values = all_tracts_df$estimate,
                 opacity = 1,
-                title = "Population Quantiles")
+                title = title)
+  })
+  
+  # Weighted average
+  output$census_avg <- renderText({
+    stops_df <- stops_with_census() %>% drop_na()
+    req(nrow(stops_df) > 0)
+    
+    weighted_avg <- sum(stops_df$Avg.Rides * stops_df$estimate) / sum(stops_df$Avg.Rides)
+    weighted_avg <- round(weighted_avg, 2)
+    return(paste("Average weighted by ridership:", weighted_avg))
   })
   
   # Action button to process dialog
