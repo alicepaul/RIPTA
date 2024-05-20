@@ -1,4 +1,46 @@
 ################## WAVE DATA ##################################################
+
+is_transfer <- function(Time, Route, max_time=122, diff_route = FALSE) {
+  #' Determines if a ride in the Wave data is a transfer.
+  #'
+  #' @param Time vector - vector of date times (sorted)
+  #' @param Route vector - vector of routes (in same order)
+  #' @param max_time integer - The maximum time (in
+  #' mins) allowed between two rides to be considered
+  #' a transfer; the default is 122
+  #' @param diff_route boolean - whether or not to only consider
+  #' transfers when the events are different routes
+  #'
+  #' @returns numeric vector - 0/1 indicating whether or not each ride
+  #' is a transfer.
+  
+  # First row cannot be a transfer because the data is sorted by time
+  transfer <- rep(0,length(Time))
+  last_paid <- Time[1]
+  last_route <- Route[1]
+  
+  # If length 1 - return
+  if (length(Time) == 1){
+    return(transfer)
+  }
+
+  for (i in 2:length(Time)) {
+    # Transfer must be within max time - if not, update last paid time
+    # If diff_route = TRUE, must also be a different route
+    if ((difftime(Time[i],last_paid,units="mins") > max_time) &
+        (difftime(Time[i],last_paid,units="mins") <= 5) &
+        (!diff_route | (Route[i] != last_route))) {
+      transfer[i] <- 0
+      last_paid <- Time[i]
+      last_route <- Route[i]
+    } else{
+      transfer[i] <- 1
+    }
+  }
+
+  return(transfer)
+}
+
 prep_wave <- function(wave_path, institution_path = NULL) {
   #' Pre-processes Wave data.
   #'
@@ -183,12 +225,12 @@ prep_wave <- function(wave_path, institution_path = NULL) {
   # Add transfer columns
   WAVE_data <- WAVE_data %>%
     group_by(Card.Number) %>%
-    arrange(Time, .by_group = TRUE)
-  
-  transfers <- sapply(1:nrow(WAVE_data),
-                      function(i) is_transfer(i, WAVE_data))
-  WAVE_data$Transfer <- transfers[1, ]
-  WAVE_data$Transfer.2 = transfers[2, ]
+    arrange(Time, .by_group = TRUE) %>%
+    mutate(Transfer = is_transfer(Time, Route.Number, 
+                                  diff_route = FALSE),
+           Transfer.Diff.Route = is_transfer(Time, Route.Number,
+                                            diff_route = TRUE)) %>%
+    ungroup()
   
   # Select final columns
   WAVE_data <- WAVE_data %>%
@@ -197,7 +239,7 @@ prep_wave <- function(wave_path, institution_path = NULL) {
     select(Source, Route.Number, Trip.Number, Stop.Number, Time,
            Ride.Count, Type, College, High.School, Institution.Name,
            Institution, Low.Income, Off.Peak, Eco.Pass, Transfer,
-           Transfer.2, Monthly.Pass, Day.Pass, One.Hour.Pass, Card.Number)
+           Transfer.Diff.Route, Monthly.Pass, Day.Pass, One.Hour.Pass, Card.Number)
   
   return(WAVE_data)
 }
@@ -428,19 +470,21 @@ prep_full <- function(wave, institution, ttp, key) {
   full_data <- full_data %>%
     select("Trip.Id", "Time", "Day.of.Week", "Route.Number",
            "Stop.Number", "Trip.Number", "Source", "Ride.Count",
-           "Type", "College", "High.School", "Low.Income",
-           "Off.Peak", "Eco.Pass", "Transfer", "One.Hour.Pass",
-           "Two.Hour.Pass", "Day.Pass", "Ten.Ride.Pass", "Week.Pass",
-           "Monthly.Pass", "Institution.Name", "Institution", "Card.Number")
+           "Type", "College", "High.School", "Low.Income", "Transfer",
+           "Transfer.Diff.Route", "Off.Peak", "Eco.Pass", 
+           "One.Hour.Pass", "Two.Hour.Pass", "Day.Pass", 
+           "Ten.Ride.Pass", "Week.Pass",
+           "Monthly.Pass", "Institution.Name", 
+           "Institution", "Card.Number")
   return(full_data)
 }
 
 
 # DEMO
 #setwd("/Users/alice/Dropbox/RIPTA/")
-#wave_filename <- "data/Wave_Aug23.csv"
-#inst_filename <- "data/Institutional Rides Invoice Report_2023-11-27_12-02-18_20611.csv"
-#ttp_filename <- "data/CORRECTED_CashFareBox_TTPs_Aug23.csv"
-#key_filename <- "data/CashFareBox_August23.csv"
+#wave_filename <- "raw_data/wave_ridesdetail/ridesdetail_oct23.csv"
+#inst_filename <- "raw_data/wave_institutional/Institutional Rides Invoice Report_2024-02-16_09-45-33_22492.csv"
+#ttp_filename <- "raw_data/gf_ttps/Oct.csv"
+#key_filename <- "raw_data/gf_keys/EVENT_SUMMARY_(ROUTESUM)_REPORT-BY_ROUTE_(OCTOBER_1_2023_040000-NOVEMBER_1_2023_020000).csv"
 #full_df <- prep_full(wave_filename, inst_filename, ttp_filename, key_filename)
-#write.csv(full_df, "data/MergedData.csv", row.names = FALSE)
+#write.csv(full_df, "raw_data/MergedData.csv", row.names = FALSE)

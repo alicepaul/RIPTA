@@ -1,6 +1,7 @@
 #
 .DS_Store
 data/
+raw_data/
 gtfs/
 
 # History files

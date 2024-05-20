@@ -87,6 +87,11 @@ plot_rides_per_stop <- function(all_tracts_data, metric) {
   # Plot
   plot <- leaflet() %>%
     addProviderTiles(providers$CartoDB.Positron) %>%
+    # Census data
+    addPolygons(data = all_tracts_data,
+                color = ~ census_pal(estimate),
+                weight = 0.5,
+                fillOpacity = 0.1) %>%
     # Stop coordinates
     addCircleMarkers(data = rides_per_stop_data,
                      lng = ~ stop_lon,
@@ -95,11 +100,6 @@ plot_rides_per_stop <- function(all_tracts_data, metric) {
                      radius = 2,
                      opacity = 1,
                      col = ~ stops_pal(Avg.Rides)) %>%
-    # Census data
-    addPolygons(data = all_tracts_data,
-                color = ~ census_pal(estimate),
-                weight = 0.5,
-                fillOpacity = 0.1) %>%
     addLegend(position = "topright",
               pal = stops_pal,
               values = rides_per_stop_data$Avg.Rides,
