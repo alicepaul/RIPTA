@@ -1,9 +1,3 @@
-<<<<<<< Updated upstream
-x <- 10
-
-=======
-x <- 3
->>>>>>> Stashed changes
 ################## WAVE DATA ##################################################
 
 is_transfer <- function(Time, Route, max_time=60, diff_route = FALSE) {
