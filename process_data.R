@@ -1,13 +1,13 @@
 ################## WAVE DATA ##################################################
 
-is_transfer <- function(Time, Route, max_time=122, diff_route = FALSE) {
+is_transfer <- function(Time, Route, max_time=60, diff_route = FALSE) {
   #' Determines if a ride in the Wave data is a transfer.
   #'
   #' @param Time vector - vector of date times (sorted)
   #' @param Route vector - vector of routes (in same order)
   #' @param max_time integer - The maximum time (in
   #' mins) allowed between two rides to be considered
-  #' a transfer; the default is 122
+  #' a transfer; the default is 60
   #' @param diff_route boolean - whether or not to only consider
   #' transfers when the events are different routes
   #'
@@ -27,14 +27,16 @@ is_transfer <- function(Time, Route, max_time=122, diff_route = FALSE) {
   for (i in 2:length(Time)) {
     # Transfer must be within max time - if not, update last paid time
     # If diff_route = TRUE, must also be a different route
-    if ((difftime(Time[i],last_paid,units="mins") > max_time) &
-        (difftime(Time[i],last_paid,units="mins") <= 5) &
+    if ((difftime(Time[i],last_paid,units="mins") <= max_time) &
+        (difftime(Time[i],last_paid,units="mins") > 5) &
         (!diff_route | (Route[i] != last_route))) {
-      transfer[i] <- 0
+      transfer[i] <- 1
       last_paid <- Time[i]
       last_route <- Route[i]
     } else{
-      transfer[i] <- 1
+      transfer[i] <- 0
+      last_paid <- Time[i]
+      last_route <- Route[i]
     }
   }
 
@@ -227,9 +229,7 @@ prep_wave <- function(wave_path, institution_path = NULL) {
     group_by(Card.Number) %>%
     arrange(Time, .by_group = TRUE) %>%
     mutate(Transfer = is_transfer(Time, Route.Number, 
-                                  diff_route = FALSE),
-           Transfer.Diff.Route = is_transfer(Time, Route.Number,
-                                            diff_route = TRUE)) %>%
+                                  diff_route = TRUE)) %>%
     ungroup()
   
   # Select final columns
