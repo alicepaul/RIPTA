@@ -1,11 +1,11 @@
 # This file contains functions that are not specific to any of the tabs.
 
 # Constants
-CENSUS_DATA <<- readRDS("./data/census_data.rds")
+# CENSUS_DATA <<- readRDS("./data/census_data.rds")
 # Stops GTFS data containing the coordinates of each
 # stop and their corresponding census tract
 STOPS_DATA <<- readRDS("./data/stops_data.rds")
-
+CENSUS_DATA_MERGED <<- readRDS("./data/census_data_merged.rds")
 
 get_ridership_summary_table <- function(data, active_tags) {
   #' Summarizes the filtered data.
@@ -18,9 +18,21 @@ get_ridership_summary_table <- function(data, active_tags) {
   #' @returns gt table - Summary table
   req(nrow(data) > 0)
   all_tags <- c("Source", "Day.of.Week", "Institution", active_tags)
+  
+  # Summary table
   table <- data %>%
     tbl_summary(include = all_tags,
-                type = list(active_tags ~ "dichotomous")) %>%
+                type = list(active_tags ~ "dichotomous"),
+                value = list(Low.Income ~ "1",
+                             Off.Peak ~ "1",
+                             Eco.Pass ~ "1",
+                             Transfer ~ "1",
+                             One.Hour.Pass ~ "1",
+                             #Two.Hour.Pass ~ "1",
+                             Day.Pass ~ "1",
+                             #Ten.Ride.Pass ~ "1",
+                             #Week.Pass ~ "1",
+                             Monthly.Pass ~ "1")) %>%
     as_gt()
   return(table)
 }
@@ -313,5 +325,3 @@ set_password <- function(new_password, raw_data_path, encrypted_data_path) {
   # Save the encrypted data
   saveRDS(encrypted_data, encrypted_data_path)
 }
-
-

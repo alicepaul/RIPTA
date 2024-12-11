@@ -15,6 +15,11 @@ library(tidycensus)
 library(tidyverse)
 library(tigris)
 library(geosphere)
+library(parallel)
+library(shinycssloaders)
+library(stringr)
+library(janitor)
+
 
 # Update max file upload size
 options(shiny.maxRequestSize = 200 * 1024 ^ 2)
@@ -107,6 +112,12 @@ ui <- fluidPage(
                                        height = "800px"))),
           br(),
           dataTableOutput("averageRides"),
+          br(),
+          p("This table displays census and transportation-related 
+          statistics for each bus route, summarizing key metrics such as 
+          population, household income, and transportation mode usage. 
+          Each row corresponds to a specific route, providing a snapshot 
+          of the community characteristics served by that route."),
           dataTableOutput("standardizedRides")),
         tabPanel(
           "Route Summary",
@@ -235,7 +246,8 @@ server <- function(input, output) {
   # --- This block pertains to the "Ridership Summary" tab
   # Table summarizing ridership characteristics
   output$allSummary <- render_gt({
-    get_ridership_summary_table(filtered_data(), active_tags()) 
+    req(filtered_data(), active_tags(), nrow(filtered_data()) > 0)
+    get_ridership_summary_table(filtered_data(), active_tags())
   })
   
   # Plot ridership over a day
@@ -252,15 +264,18 @@ server <- function(input, output) {
   
   # --- This block pertains to the "Ridership by Route" tab
   # Average ridership across routes
-  avg_rides_data <-
-    reactive(get_average_ridership(filtered_data()))
+  avg_rides_data <- reactiveVal()
+  observe({
+    avg_rides_data(get_average_ridership(filtered_data()))
+  })
   output$averageRidesPlot <- renderPlotly({
     plot_average_ridership(avg_rides_data(), input$rideMetric)
   })
+  
   output$averageRides <- renderDataTable({
     display_average_ridership(avg_rides_data())
   })
-  
+
   # Standardized ridership with census demographics
   output$standardizedRides <- renderDataTable({
     get_standardized_rides(filtered_data())

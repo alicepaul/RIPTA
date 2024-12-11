@@ -191,43 +191,96 @@ get_weighted_averages_for_route <- function(all_data, route_num) {
   req(nrow(all_data) > 0)
   rides_per_stop_data <- all_data %>%
     # Get data for a specific route
-    get_data_for_route(route_num) %>%
-    # Get ridership for each stop in that route
-    get_rides_per_stop_helper()
+    get_data_for_route(route_num)
+  
+  # Filter CENSUS_DATA_MERGED for Route.Number 
+  filtered_census_data <- CENSUS_DATA_MERGED %>%
+    filter(Route.Number == route_num)
   
   # If data does not exist after filtering and
   # pre-processing, return 0 for weighted averages
   if (nrow(rides_per_stop_data) == 0) {
-    census_vars <- c("B01003_001", # Population
+    census_vars <- c("B01003_001", # Population ##
                      "B19013_001", # Household income
-                     "B05010_002", # Under poverty line
-                     "B23025_001", # Employment status
-                     "B08301_002", # Car truck or van
-                     "B08301_004", # Carpooled
-                     "B08301_010", # Public transportation
-                     "B08141_002") # No vehicle
-    weighted_avg_data <- data.frame(matrix(0, ncol=length(census_vars)))
-    colnames(weighted_avg_data) <- census_vars
+                     "B05010_002", # Under poverty line ## 
+                     "B23025_001", # Employment status ##
+                     "B08301_002", # Car truck or van ##
+                     "B08301_004", # Carpooled ##
+                     "B08301_010", # Public transportation ##
+                     "B08141_002") # No vehicle ##
+    summary_data <- data.frame(matrix(0, ncol=length(census_vars)))
+    colnames(summary_data) <- census_vars
   } else {
     # Merge with census data then compute weighted
     # average for each census metric
-    merged_data <- mutate(CENSUS_DATA, poly_coords = geometry) %>%
-      st_join(rides_per_stop_data) %>%
-      # Keep relevant columns
-      select(c(variable, estimate, Avg.Rides)) %>%
-      st_drop_geometry() %>%
-      drop_na() %>%
-      group_by(variable) %>%
-      summarize(Weighted.Avg = round(
-        sum(Avg.Rides * estimate) / sum(Avg.Rides),
-        2))
     
-    # Reformat to be combined with data from other routes
-    weighted_avg_data <- data.frame(matrix(merged_data$Weighted.Avg, nrow=1))
-    colnames(weighted_avg_data) <- merged_data$variable
+    # Calculate average rides per stop for the specific route, merge with census data 
+    num_days <- n_distinct(as.Date(rides_per_stop_data$Time))
+    merged_data <- rides_per_stop_data %>%
+      group_by(Stop.Number) %>%
+      summarize(Avg.Rides = round(sum(Ride.Count) / num_days, 3)) %>%
+      mutate(Stop.Number = as.numeric(str_sub(Stop.Number, 2))) %>%
+      inner_join(filtered_census_data, by = c("Stop.Number" = "stop_id")) %>%
+      drop_na() %>%
+      select(c(variable, estimate, B05010_002_Total, B23025_001_Total,B08301_Total,B08141_Total,
+               Avg.Rides))
+    
+    # Ensure that all required columns are numeric
+    merged_data <- merged_data %>%
+      mutate(
+        Avg.Rides = as.numeric(Avg.Rides),
+        estimate = as.numeric(estimate),
+        B05010_002_Total = as.numeric(B05010_002_Total),
+        B23025_001_Total = as.numeric(B23025_001_Total),
+        B08301_Total = as.numeric(B08301_Total),
+        B08141_Total = as.numeric(B08141_Total)
+      )
+    
+    # Calculate the weighted mean/percentage for each census variable 
+    summary_data <- merged_data %>%
+      group_by(variable) %>%
+      reframe(
+        Value = case_when(
+          # For population (B01003_001), calculate the weighted mean using Avg.Rides
+          variable == "B01003_001" ~ round(sum(Avg.Rides * estimate) / sum(Avg.Rides), 2),
+          
+          # For household income (B19013_001), calculate the weighted mean using Avg.Rides
+          variable == "B19013_001" ~ round(sum(Avg.Rides * estimate) / sum(Avg.Rides), 2),
+          
+          # For Under Poverty Line (B05010_002), calculate the weighted percentage
+          variable == "B05010_002" ~ round((sum(Avg.Rides * estimate) / sum(Avg.Rides *
+                                                                              B05010_002_Total)) * 100, 2),
+          
+          # For Employment Status (B23025_001), calculate the weighted percentage
+          variable == "B23025_001" ~ round((sum(Avg.Rides * estimate) / sum(Avg.Rides *
+                                                                              B23025_001_Total)) * 100, 2),
+          
+          # For Car truck or van (B08301_002), calculate the weighted percentage
+          variable == "B08301_002" ~ round((sum(Avg.Rides * estimate) / sum(Avg.Rides *
+                                                                              B08301_Total)) * 100, 2),
+          
+          # For Carpooled (B08301_004), calculate the weighted percentage
+          variable == "B08301_004" ~ round((sum(Avg.Rides * estimate) / sum(Avg.Rides *
+                                                                              B08301_Total)) * 100, 2),
+          
+          # For Public transportation (B08301_010), calculate the weighted percentage
+          variable == "B08301_010" ~ round((sum(Avg.Rides * estimate) / sum(Avg.Rides *
+                                                                              B08301_Total)) * 100, 2),
+          
+          # For No vehicle (B08141_002), calculate the weighted percentage
+          variable == "B08141_002" ~ round((sum(Avg.Rides * estimate) / sum(Avg.Rides *
+                                                                              B08141_Total)) * 100, 2)
+        )
+      ) %>%
+      unique()
+    
+    # Reformat the data to be combined with other routes
+    summary_data <- summary_data %>%
+      pivot_wider(names_from = variable, values_from = Value)
   }
-  weighted_avg_data$Route <- route_num
-  return(weighted_avg_data)
+  # Add route number to the summary table 
+  summary_data$Route <- route_num
+  return(summary_data)
 }
 
 
@@ -245,28 +298,28 @@ get_standardized_rides <- function(data) {
   route_nums <- unique(data$Route.Number)
   route_nums <- route_nums[!(route_nums %in% c(89, 999, 9999))]
   # Get weighted averages for each route
-  data <- lapply(route_nums, function(route) {
+  data <- mclapply(route_nums, function(route) {
     get_weighted_averages_for_route(data, route)
-  })
+  }, mc.cores = parallel::detectCores() - 1)
   data <- do.call("rbind", data)
   # Rename columns
   colnames(data) <- c("Population",
-                      "Below Poverty Line",
-                      "No Vehicle",
-                      "Car Truck or Van",
-                      "Carpool",
-                      "Public Transportation",
+                      "Below Poverty Line (%)",
+                      "No Vehicle (%)",
+                      "Car Truck or Van (%)",
+                      "Carpool (%)",
+                      "Public Transportation (%)",
                       "Household Income",
-                      "Employment Status",
+                      "Employment Status (%)",
                       "Route Number")
   data <- data[, c("Route Number",
                    "Population",
                    "Household Income",
-                   "Below Poverty Line",
-                   "Employment Status",
-                   "Car Truck or Van",
-                   "Carpool",
-                   "Public Transportation",
-                   "No Vehicle")]
+                   "Below Poverty Line (%)",
+                   "Employment Status (%)",
+                   "Car Truck or Van (%)",
+                   "Carpool (%)",
+                   "Public Transportation (%)",
+                   "No Vehicle (%)")]
   return(data)
 }
